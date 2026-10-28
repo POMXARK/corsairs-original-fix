@@ -54,8 +54,43 @@ public class FpsOverlay : Form {
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
     // the window of the game can come up after this one and cover it: put it on top again (topmost, no move, no size, no activate, show)
     public void Raise() { SetWindowPos(Handle, (IntPtr)(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0040); }
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr l);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out Rectangle r);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int i);
+    delegate bool EnumProc(IntPtr h, IntPtr l);
+    // for the log: where the windows of this process and of the game stand in the z-order (1 = the top), their rectangles and extended styles
+    public string Where(uint game) {
+        var sb = new System.Text.StringBuilder(); int z = 0; uint me = (uint)System.Diagnostics.Process.GetCurrentProcess().Id; IntPtr self = Handle;
+        EnumWindows((h, l) => {
+            z++; uint p; GetWindowThreadProcessId(h, out p);
+            if ((h == self || p == game) && IsWindowVisible(h)) { Rectangle r = new Rectangle(); GetWindowRect(h, out r);
+                sb.AppendFormat("[{0} z={1} ltrb={2},{3},{4},{5} ex=0x{6:X}] ", h == self ? "overlay" : "game", z, r.X, r.Y, r.Width, r.Height, GetWindowLong(h, -20)); }
+            return true; }, IntPtr.Zero);
+        return sb.ToString() + "visible=" + Visible;
+    }
     protected override bool ShowWithoutActivation { get { return true; } }
     protected override CreateParams CreateParams { get { var p = base.CreateParams; p.ExStyle |= 0x80 | 0x20 | 0x08000000 | 0x80000; return p; } } // toolwindow, transparent to input, no activate, layered
+}
+"@
+Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing @"
+using System; using System.Drawing; using System.Windows.Forms;
+// a message in the top middle of the screen (a screenshot is saved, a video begins or ends): like the counter, it never takes the focus
+public class Toast : Form {
+    public Label Text1 = new Label();
+    public Toast() {
+        FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; TopMost = true; StartPosition = FormStartPosition.Manual;
+        Size = new Size(320, 40); BackColor = Color.Black; Opacity = 0.8;
+        var scr = Screen.PrimaryScreen.Bounds;
+        Location = new Point(scr.X + (scr.Width - Width) / 2, scr.Y + 24);
+        Text1.Font = new Font("Segoe UI", 18, FontStyle.Bold, GraphicsUnit.Pixel); Text1.TextAlign = ContentAlignment.MiddleCenter; Text1.Dock = DockStyle.Fill;
+        Controls.Add(Text1);
+    }
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    public void Raise() { SetWindowPos(Handle, (IntPtr)(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0040); }
+    protected override bool ShowWithoutActivation { get { return true; } }
+    protected override CreateParams CreateParams { get { var p = base.CreateParams; p.ExStyle |= 0x80 | 0x20 | 0x08000000 | 0x80000; return p; } }
 }
 "@
 
@@ -171,7 +206,15 @@ if (-not $NoFps -and ($ShowFps -or -not $NoFpsLog)) {
     try { $fps = Start-Fps $game } catch { Log "fps: PresentMon did not start: $($_.Exception.Message)" }
 }
 $overlay = $null
-if ($ShowFps) { $overlay = New-Object FpsOverlay($Osd.x, $Osd.y, [int]$Osd.size); $overlay.Show() }
+$toast = New-Object Toast
+$toastUntil = [datetime]::MinValue
+function Notify($text, $color, $seconds) {
+    $toast.Text1.ForeColor = $color; $toast.Text1.Text = $text
+    $script:toastUntil = (Get-Date).AddSeconds($seconds)
+    if (-not $toast.Visible) { $toast.Show() }
+    $toast.Raise()
+}
+if ($ShowFps) { $overlay = New-Object FpsOverlay($Osd.x, $Osd.y, [int]$Osd.size); $overlay.Show(); Log "overlay at $($overlay.Left),$($overlay.Top) size $($overlay.Width)x$($overlay.Height) from osd.ini x=$($Osd.x) y=$($Osd.y)" }
 $video = $null; $f8 = $false; $f9 = $false; $tick = 0
 while (-not $game.HasExited) {
     Start-Sleep -Milliseconds 100
@@ -182,20 +225,23 @@ while (-not $game.HasExited) {
     $d8 = $focus -and (([CapNative]::GetAsyncKeyState(0x77) -band 0x8000) -ne 0)
     $d9 = $focus -and (([CapNative]::GetAsyncKeyState(0x78) -band 0x8000) -ne 0)
     if ($d8 -and -not $f8) {
-        try { $n = Join-Path $Shots ("{0:yyyy-MM-dd_HH-mm-ss}.jpg" -f (Get-Date)); Save-Screenshot $n; Log "screenshot $n" }
-        catch { Log "screenshot failed: $($_.Exception.Message)" }
+        try { $n = Join-Path $Shots ("{0:yyyy-MM-dd_HH-mm-ss}.jpg" -f (Get-Date)); Save-Screenshot $n; Log "screenshot $n"; Notify "Скриншот сохранён" ([Drawing.Color]::Lime) 2 }
+        catch { Log "screenshot failed: $($_.Exception.Message)"; Notify "Скриншот не удался" ([Drawing.Color]::Red) 3 }
     }
     if ($d9 -and -not $f9 -and -not $NoVideo) {
         try {
-            if ($video) { Stop-Video $video; $video = $null; Log "video ended" }
-            else { $n = Join-Path $Shots ("{0:yyyy-MM-dd_HH-mm-ss}.mp4" -f (Get-Date)); $video = Start-Video $n; Log "video $n" }
-        } catch { Log "video failed: $($_.Exception.Message)" }
+            if ($video) { Stop-Video $video; $video = $null; Log "video ended"; Notify "Запись сохранена" ([Drawing.Color]::Lime) 3 }
+            else { $n = Join-Path $Shots ("{0:yyyy-MM-dd_HH-mm-ss}.mp4" -f (Get-Date)); $video = Start-Video $n; Log "video $n"; Notify "● Запись началась (F9 - стоп)" ([Drawing.Color]::Red) 3 }
+        } catch { Log "video failed: $($_.Exception.Message)"; Notify "Запись не удалась" ([Drawing.Color]::Red) 3 }
     }
     $f8 = $d8; $f9 = $d9
-    if ($overlay) { [Windows.Forms.Application]::DoEvents(); if ($tick % 10 -eq 0) { $overlay.Raise() } }
+    [Windows.Forms.Application]::DoEvents()
+    if ($toast.Visible) { if ((Get-Date) -gt $toastUntil) { $toast.Hide() } elseif ($tick % 10 -eq 0) { $toast.Raise() } }
+    if ($overlay) { if ($tick % 10 -eq 0) { $overlay.Raise() }; if ($tick % 300 -eq 20) { Log ("overlay: " + $overlay.Where([uint32]$game.Id)) } }
     if ($fps -and $tick % 10 -eq 0) { try { Read-Fps $fps } catch { Log "fps: $($_.Exception.Message)" } }
 }
 Stop-Video $video
+$toast.Close()
 if ($overlay) { $overlay.Close() }
 if ($fps -and -not $fps.Proc.HasExited) { $fps.Proc.Kill() }
 Log "game ended"
