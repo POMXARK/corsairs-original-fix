@@ -53,8 +53,8 @@ function Set-Walk($path, [bool]$wasd) {
     # (virtual-key codes: W 87, S 83; the second key stays the mouse button of the original)
     $enc = [Text.Encoding]::GetEncoding(1251)
     $new = @{ "control24" = "1,87,1,87,1"; "control25" = "1,83,2,83,2" }
-    $src = if ($wasd) { $path } else { "$path.orig" }
-    if (-not $wasd -and -not (Test-Path $src)) { return }
+    $src = "$path.orig"   # always from the saved original: a rebind of the last run does not stay
+    if (-not (Test-Path $src)) { return }
     $lines = [IO.File]::ReadAllLines($src, $enc) | ForEach-Object {
         if ($wasd -and $_ -match "^(control\d+)=" -and $new.ContainsKey($Matches[1])) { "$($Matches[1])=" + $new[$Matches[1]] } else { $_ }
     }
