@@ -59,6 +59,7 @@ public static class CapNative {
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] public static extern IntPtr SetWindowLongPtr(IntPtr h, int index, IntPtr value);
     [DllImport("user32.dll")] public static extern bool AdjustWindowRectEx(ref RECT r, uint style, bool menu, uint exStyle);
     [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref PT p);
+    [DllImport("user32.dll")] public static extern int GetSystemMetrics(int i);
     [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int hh, uint flags);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
@@ -367,7 +368,7 @@ function Set-Frame {
     }
     if (-not $hookLive) { return }   # the logo videos go to GetWindowRect of the window as if it were the client area: it stays at 0,0 until they are over
     if (-not $script:frameAt) { $script:frameAt = Get-Date }
-    if (((Get-Date) - $script:frameAt).TotalSeconds -lt 6) { return }   # the first move waits until DDrawCompat has settled
+    if (((Get-Date) - $script:frameAt).TotalSeconds -lt 1) { return }   # the first move waits until DDrawCompat has settled
     $game.Refresh()
     $h = $game.MainWindowHandle
     if ($h -eq [IntPtr]::Zero) { return }
@@ -385,10 +386,9 @@ function Set-Frame {
     if ($Cfg.frame -eq 3) {   # test: the real frame of the window (caption, system menu), no strip: the window is dragged by the system
         if (-not $script:placed) {
             $script:placed = $true
-            $rc = New-Object CapNative+RECT; $rc.Right = $w; $rc.Bottom = $ht
             $ns = ([int64][CapNative]::GetWindowLongPtr($h, -16) -band 0x7FFFFFFF) -bor 0xCA0000   # no WS_POPUP; WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
-            [void][CapNative]::AdjustWindowRectEx([ref]$rc, [uint32]$ns, $false, [uint32][int64][CapNative]::GetWindowLongPtr($h, -20))
-            $script:ints = $null; $ints = @((0 - $rc.Left), (0 - $rc.Top), (($rc.Right - $rc.Left) - $w), (($rc.Bottom - $rc.Top) - $ht))
+            $fx = [CapNative]::GetSystemMetrics(7); $fy = [CapNative]::GetSystemMetrics(8); $cap = [CapNative]::GetSystemMetrics(4)   # the frame of a window with a caption and no resize border (AdjustWindowRectEx here promised 8,31, the real ones are 3,26)
+            $ints = @($fx, ($fy + $cap), (2 * $fx), (2 * $fy + $cap))
             $script:ints = $ints
             [void][GameHook]::Poke(0x900, ($ints | % { [BitConverter]::GetBytes([int]$_) } | % { $_ }))
             [void][CapNative]::SetWindowLongPtr($h, -16, [IntPtr]$ns)
