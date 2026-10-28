@@ -83,7 +83,7 @@ $auto.Text = "по экрану"
 $auto.Add_CheckedChanged({ $nud.Enabled = -not $auto.Checked })
 
 $chWasd = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 130 290 22
-$chWasd.Text = "Ходьба в городе на W / S"; $chWasd.Checked = $curWasd
+$chWasd.Text = "Ходьба в городе на W A S D"; $chWasd.Checked = $curWasd
 
 $status = Add-Ctl $f (New-Object Windows.Forms.Label) 8 188 316 44 0
 $status.Text = "Игра: $GameDir"
