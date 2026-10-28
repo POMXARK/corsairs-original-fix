@@ -285,7 +285,8 @@ function Read-Fps($s) {
         $sum = 0.0; foreach ($x in $ms) { $sum += $x }
         $sorted = $ms.ToArray(); [Array]::Sort($sorted)
         $worst = $sorted[[Math]::Max(0, [int][Math]::Ceiling($sorted.Count * 0.99) - 1)]   # 99th percentile: the 1 % lows
-        if (-not $NoFpsLog) { Log ("fps avg {0:0.0} min {1:0.0} 1%low {2:0.0} frames {3}" -f (1000 * $ms.Count / $sum), (1000 / $sorted[-1]), (1000 / $worst), $ms.Count) }
+        $slow = 0; foreach ($x in $ms) { if ($x -gt 50) { $slow++ } }   # stutters: frames longer than 50 ms
+        if (-not $NoFpsLog) { Log ("fps avg {0:0.0} min {1:0.0} 1%low {2:0.0} frames {3} stutters>50ms {4} worst {5:0}ms" -f (1000 * $ms.Count / $sum), (1000 / $sorted[-1]), (1000 / $worst), $ms.Count, $slow, $sorted[-1]) }
     }
 }
 
@@ -303,7 +304,7 @@ if (-not $NoHook -and (Test-Path $binFile)) {
     if ($err) { Log "hook: $err (windows on top are used)" }
     else {
         $hooked = $true
-        $scr = [Windows.Forms.Screen]::PrimaryScreen.Bounds
+        $script:scr = [Windows.Forms.Screen]::PrimaryScreen.Bounds
         $px = [int]($Osd.x * ($scr.Width - 10 * 40)); $py = [int]($Osd.y * ($scr.Height - 20))
         $script:fpsPos = $px, $py
         [void][GameHook]::Poke(0, [BitConverter]::GetBytes($px) + [BitConverter]::GetBytes($py))
@@ -358,6 +359,8 @@ while (-not $game.HasExited) {
         [void][GameHook]::Poke(0, [BitConverter]::GetBytes([int]$fpsPos[0]) + [BitConverter]::GetBytes([int]$fpsPos[1]) + [BitConverter]::GetBytes([int]$msgPos[0]) + [BitConverter]::GetBytes([int]$msgPos[1]))
         Poke-Text 0x10 48 $fpsText
         Poke-Text 0x40 60 $msgText
+        $gx = [Math]::Max(0, [int]($scr.Width - 490)); $gy = [Math]::Max(0, [int]$fpsPos[1] - 130)   # the frame-time graph above the counter
+        [void][GameHook]::Poke(0x80, [BitConverter]::GetBytes([int]$(if ($fpsShown) { 1 } else { 0 })) + [BitConverter]::GetBytes($gx) + [BitConverter]::GetBytes($gy))
     }
     if ($hooked -and $tick % 10 -eq 5) {
         $fr = [GameHook]::Peek(0x7C)
