@@ -110,7 +110,7 @@ $ds = [Windows.Forms.Screen]::PrimaryScreen.Bounds
 $pw = 148; $ph = [int][Math]::Round($pw * $ds.Height / $ds.Width)
 $pan = Add-Ctl $g2 (New-Object Windows.Forms.Panel) 158 20 $pw $ph
 $pan.BackColor = [Drawing.Color]::FromArgb(30, 40, 60); $pan.BorderStyle = "FixedSingle"
-$hint = Add-Ctl $g2 (New-Text "Щёлкните на миниатюре, где показывать счётчик") 158 ($ph + 24) 148 40
+$hint = Add-Ctl $g2 (New-Text "Или щёлкните на миниатюре") 158 ($ph + 24) 148 40
 $hint.TextAlign = "TopLeft"
 function Get-OsdBox {   # размер счётчика на миниатюре: ширина 5, высота 1.7 кегля на экране
     $w = [Math]::Max(6, [int]($nudOsd.Value * 5 * $pw / $ds.Width)); $h = [Math]::Max(4, [int]($nudOsd.Value * 1.7 * $ph / $ds.Height))
@@ -132,6 +132,43 @@ $moveOsd = {
 }
 $pan.Add_MouseDown($moveOsd); $pan.Add_MouseMove($moveOsd)
 $nudOsd.Add_ValueChanged({ $pan.Invalidate() })
+
+# настоящий счётчик на рабочем столе: зажать мышь и тянуть; Esc или двойной щелчок - готово
+function Show-OsdPlacer {
+    $size = [int]$nudOsd.Value
+    $o = New-Object Windows.Forms.Form
+    $o.FormBorderStyle = "None"; $o.ShowInTaskbar = $false; $o.TopMost = $true; $o.StartPosition = "Manual"; $o.KeyPreview = $true
+    $o.BackColor = [Drawing.Color]::Black; $o.Opacity = 0.8
+    $o.Size = New-Object Drawing.Size([int]($size * 5), [int]($size * 1.7))
+    $o.Location = New-Object Drawing.Point(([int]($ds.X + $osd.x * ($ds.Width - $o.Width))), ([int]($ds.Y + $osd.y * ($ds.Height - $o.Height))))
+    $l = New-Object Windows.Forms.Label
+    $l.Dock = "Fill"; $l.ForeColor = [Drawing.Color]::Lime; $l.TextAlign = "MiddleCenter"; $l.Text = "FPS 120"
+    $l.Font = New-Object Drawing.Font("Consolas", $size, [Drawing.FontStyle]::Bold, [Drawing.GraphicsUnit]::Pixel)
+    $o.Controls.Add($l)
+    $grab = @{ on = $false; dx = 0; dy = 0 }
+    $down = { param($s, $e) if ($e.Button -eq "Left") { $grab.on = $true; $grab.dx = [Windows.Forms.Cursor]::Position.X - $o.Left; $grab.dy = [Windows.Forms.Cursor]::Position.Y - $o.Top } }
+    $move = {
+        param($s, $e)
+        if (-not $grab.on) { return }
+        $nx = [Math]::Min($ds.Right - $o.Width, [Math]::Max($ds.Left, [Windows.Forms.Cursor]::Position.X - $grab.dx))
+        $ny = [Math]::Min($ds.Bottom - $o.Height, [Math]::Max($ds.Top, [Windows.Forms.Cursor]::Position.Y - $grab.dy))
+        $o.Location = New-Object Drawing.Point($nx, $ny)
+    }
+    $up = { param($s, $e) $grab.on = $false }
+    $done = { $o.Close() }
+    foreach ($c in $o, $l) { $c.Add_MouseDown($down); $c.Add_MouseMove($move); $c.Add_MouseUp($up); $c.Add_DoubleClick($done) }
+    $o.Add_KeyDown({ param($s, $e) if ($e.KeyCode -eq "Escape" -or $e.KeyCode -eq "Return") { $o.Close() } })
+    $f.WindowState = "Minimized"
+    [void]$o.ShowDialog()
+    $f.WindowState = "Normal"; $f.Activate()
+    $osd.x = [Math]::Min(1, [Math]::Max(0, ($o.Left - $ds.X) / [Math]::Max(1, $ds.Width - $o.Width)))
+    $osd.y = [Math]::Min(1, [Math]::Max(0, ($o.Top - $ds.Y) / [Math]::Max(1, $ds.Height - $o.Height)))
+    $pan.Invalidate()
+    $status.Text = "Место счётчика выбрано; нажмите «Сохранить»"
+}
+$bPlace = Add-Ctl $g2 (New-Object Windows.Forms.Button) 12 122 138 24
+$bPlace.Text = "Разместить на экране"
+$bPlace.Add_Click({ [void][Windows.Forms.MessageBox]::Show("Счётчик появится на рабочем столе: зажмите его мышью и перетащите. Esc или двойной щелчок - готово.", "FPS"); Show-OsdPlacer })
 
 $status = Add-Ctl $f (New-Object Windows.Forms.Label) 8 324 316 44 0
 $status.Text = "Игра: $GameDir"
