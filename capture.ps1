@@ -236,7 +236,6 @@ while (-not $game.HasExited) {
     }
     $f8 = $d8; $f9 = $d9
     [Windows.Forms.Application]::DoEvents()
-    }
     if ($toast.Visible) { if ((Get-Date) -gt $toastUntil) { $toast.Hide() } elseif ($tick % 10 -eq 0) { $toast.Raise() } }
     if ($overlay) { if ($tick % 10 -eq 0) { $overlay.Raise() }; if ($tick % 300 -eq 20) { Log ("overlay: " + $overlay.Where([uint32]$game.Id)) } }
     if ($fps -and $tick % 10 -eq 0) { try { Read-Fps $fps } catch { Log "fps: $($_.Exception.Message)" } }
