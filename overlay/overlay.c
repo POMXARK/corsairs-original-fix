@@ -10,10 +10,11 @@
  *   +0x80 graph on (0/1), +0x84 graph x, +0x88 graph y (pixels)
  *   +0x8C TSC cycles per millisecond (the hook measures it against GetTickCount in the first second), +0x90 ring index,
  *   +0x94 TSC of the last frame, +0x98 TSC and +0x9C tick at the start of the calibration
+ *   +0x400.. char fmt[4][32] at +0x400, +0x420, +0x440, +0x460 (framerate, frametime, 1% low, 0.1% low) and +0x480 (the scale, ms): formats of the text function, written by capture.ps1
  *   +0x100 unsigned short ring[256]: the frame times in tenths of a millisecond
  * Build: ./build_overlay.sh  ->  overlay.bin (the code, loaded at 0x7E001000).
  */
-typedef void (__attribute__((cdecl)) *TextFn)(void *font, int x, int y, const char *text);
+typedef void (__attribute__((cdecl)) *TextFn)(void *font, int x, int y, const char *fmt, ...);
 typedef void (__attribute__((fastcall)) *FlipFn)(void *dev);
 typedef unsigned (__attribute__((thiscall)) *LockFn)(void *dev, int *pitch);   /* FUN_0040b4e0: the pixels of the back buffer, 0 if locked */
 typedef void (__attribute__((fastcall)) *UnlockFn)(void *dev);                  /* FUN_0040b540 */
@@ -22,7 +23,7 @@ typedef unsigned (__attribute__((stdcall)) *TickFn)(void);
 #define DATA ((volatile int *)0x7E000000)
 #define RING ((volatile unsigned short *)0x7E000100)
 #define BARS 240                 /* frames in the graph, 2 pixels each */
-#define GRAPH_H 120              /* 3 pixels per millisecond: 40 ms at the top */
+#define GRAPH_H 100              /* the height of the graph, its scale follows the worst frame */
 
 static void fill(unsigned short *base, int pitch, int sw, int sh, int x, int y, int w, int h, unsigned short c)
 {
@@ -76,28 +77,49 @@ __attribute__((fastcall)) void hook(void *dev)
     if (*fps) text((void *)font_addr, DATA[0], DATA[1], fps);
     if (*msg) text((void *)font_addr, DATA[2], DATA[3], msg);
 
-    if (DATA[0x80 / 4] && cpm >= 10) {
-        int pitch = 0;
-        unsigned short *base = (unsigned short *)((LockFn)lock_addr)(dev, &pitch);
-        if (base && pitch > 0) {
-            int sw = *(volatile int *)((char *)dev + 0x9c3f0), sh = *(volatile int *)((char *)dev + 0x9c3f4);
-            int f565 = *(volatile int *)((char *)dev + 0x9c370);   /* 1: green mask 0x7e0 (565), 0: 555 */
-            int gx = DATA[0x84 / 4], gy = DATA[0x88 / 4];
-            unsigned idx = (unsigned)DATA[0x90 / 4];
-            int i;
-            fill(base, pitch, sw, sh, gx, gy, BARS * 2 + 4, GRAPH_H + 4, rgb(f565, 8, 8, 8));
-            fill(base, pitch, sw, sh, gx + 2, gy + 2 + GRAPH_H - 50, BARS * 2, 1, rgb(f565, 110, 110, 110));    /* 16.7 ms: 60 FPS */
-            fill(base, pitch, sw, sh, gx + 2, gy + 2 + GRAPH_H - 100, BARS * 2, 1, rgb(f565, 110, 110, 110));   /* 33.3 ms: 30 FPS */
-            for (i = 0; i < BARS; i++) {
-                unsigned ms10 = RING[(idx - BARS + i) & 255];
-                int h = (int)(ms10 * 3 / 10);
-                unsigned short c;
-                if (h < 1) continue;
-                if (h > GRAPH_H) h = GRAPH_H;
-                c = ms10 <= 167 ? rgb(f565, 60, 220, 60) : ms10 <= 333 ? rgb(f565, 240, 200, 40) : rgb(f565, 240, 60, 60);
-                fill(base, pitch, sw, sh, gx + 2 + i * 2, gy + 2 + GRAPH_H - h, 2, h, c);
+    if (DATA[0x80 / 4] && cpm >= 10) {   /* the block like the OSD of RivaTuner: the numbers, then a line graph of the frame time */
+        unsigned idx = (unsigned)DATA[0x90 / 4];
+        unsigned mx = 0, m2 = 0, m3 = 0, sum = 0, n = 0, lastv = RING[(idx - 1) & 255];
+        int gx = DATA[0x84 / 4], gy = DATA[0x88 / 4], i;
+        void *font = (void *)font_addr;
+        for (i = 0; i < BARS; i++) {
+            unsigned v = RING[(idx - BARS + i) & 255];
+            if (!v) continue;
+            sum += v; n++;
+            if (v > mx) { m3 = m2; m2 = mx; mx = v; } else if (v > m2) { m3 = m2; m2 = v; } else if (v > m3) m3 = v;
+        }
+        if (n) {
+            unsigned avg = sum / n;
+            unsigned top = (mx / 100 + 1) * 100;      /* the scale of the graph: the worst frame up to 10 ms, not under 20 ms */
+            int pitch = 0, py = 0, f565 = 0;
+            unsigned short *base;
+            if (top < 200) top = 200;
+            text(font, gx, gy, (const char *)(DATA + 0x400 / 4), (int)(10000 / avg));
+            text(font, gx, gy + 18, (const char *)(DATA + 0x420 / 4), lastv / 10, lastv % 10);
+            text(font, gx, gy + 36, (const char *)(DATA + 0x440 / 4), (int)(10000 / (n >= 100 ? m3 : mx)));
+            text(font, gx, gy + 54, (const char *)(DATA + 0x460 / 4), (int)(10000 / mx));
+            text(font, gx + BARS * 2 - 70, gy + 54, (const char *)(DATA + 0x480 / 4), (int)(top / 10));
+            base = (unsigned short *)((LockFn)lock_addr)(dev, &pitch);
+            if (base && pitch > 0) {
+                int sw = *(volatile int *)((char *)dev + 0x9c3f0), sh = *(volatile int *)((char *)dev + 0x9c3f4);
+                int top_y = gy + 76, prev = -1;
+                f565 = *(volatile int *)((char *)dev + 0x9c370);   /* 1: green mask 0x7e0 (565), 0: 555 */
+                fill(base, pitch, sw, sh, gx, top_y, BARS * 2 + 4, GRAPH_H + 4, rgb(f565, 10, 10, 10));
+                fill(base, pitch, sw, sh, gx + 2, top_y + 2 + GRAPH_H / 2, BARS * 2, 1, rgb(f565, 70, 70, 70));
+                for (i = 0; i < BARS; i++) {
+                    unsigned v = RING[(idx - BARS + i) & 255];
+                    int y = GRAPH_H - (int)(v * GRAPH_H / top), y0, y1;
+                    if (!v) continue;
+                    if (y < 0) y = 0;
+                    if (y > GRAPH_H - 1) y = GRAPH_H - 1;
+                    y0 = prev < 0 ? y : (prev < y ? prev : y);
+                    y1 = prev < 0 ? y : (prev < y ? y : prev);
+                    fill(base, pitch, sw, sh, gx + 2 + i * 2, top_y + 2 + y0, 2, y1 - y0 + 1, v > 333 ? rgb(f565, 240, 70, 70) : v > 167 ? rgb(f565, 240, 200, 50) : rgb(f565, 90, 230, 90));
+                    prev = y;
+                }
+                ((UnlockFn)unlock_addr)(dev);
             }
-            ((UnlockFn)unlock_addr)(dev);
+            py = 0; (void)py;
         }
     }
     ((FlipFn)flip_addr)(dev);

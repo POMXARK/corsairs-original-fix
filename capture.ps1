@@ -156,9 +156,10 @@ function Log($text) { Add-Content $FpsLog ("{0:yyyy-MM-dd HH:mm:ss} {1}" -f (Get
 # in the game (overlay.bin hooked into ENGINE.exe) when it is there, else in a window on top
 $script:hooked = $false
 $script:hookLive = $false   # the debug font draws only when the gameplay frames come through the hook
-function Poke-Text($offset, $size, $text) {
+function Poke-Text($offset, $size, $text, [switch]$Raw) {
     $b = New-Object byte[] $size
-    $a = [Text.Encoding]::ASCII.GetBytes($text.Replace("%", "%%"))   # the text function of the engine is a printf: a lone % reads arguments that are not there and hangs the game
+    if (-not $Raw) { $text = $text.Replace("%", "%%") }
+    $a = [Text.Encoding]::ASCII.GetBytes($text)   # the text function of the engine is a printf: a lone % reads arguments that are not there and hangs the game
     [Array]::Copy($a, $b, [Math]::Min($a.Length, $size - 1))
     [void][GameHook]::Poke($offset, $b)
 }
@@ -359,8 +360,10 @@ while (-not $game.HasExited) {
         [void][GameHook]::Poke(0, [BitConverter]::GetBytes([int]$fpsPos[0]) + [BitConverter]::GetBytes([int]$fpsPos[1]) + [BitConverter]::GetBytes([int]$msgPos[0]) + [BitConverter]::GetBytes([int]$msgPos[1]))
         Poke-Text 0x10 48 $fpsText
         Poke-Text 0x40 60 $msgText
-        $gx = [Math]::Max(0, [int]($scr.Width - 490)); $gy = [Math]::Max(0, [int]$fpsPos[1] - 130)   # the frame-time graph above the counter
+        $gx = [Math]::Max(0, [int]($scr.Width - 490)); $gy = [Math]::Max(0, [int]$fpsPos[1] - 200)   # the frame-time graph above the counter
         [void][GameHook]::Poke(0x80, [BitConverter]::GetBytes([int]$(if ($fpsShown) { 1 } else { 0 })) + [BitConverter]::GetBytes($gx) + [BitConverter]::GetBytes($gy))
+        Poke-Text 0x400 32 "Framerate %d FPS" -Raw; Poke-Text 0x420 32 "Frametime %d.%d ms" -Raw   # formats of the engine text function (a printf), the numbers come from the hook
+        Poke-Text 0x440 32 "1%% low  %d FPS" -Raw; Poke-Text 0x460 32 "0.1%% low %d FPS" -Raw; Poke-Text 0x480 32 "%d ms" -Raw
     }
     if ($hooked -and $tick % 10 -eq 5) {
         $fr = [GameHook]::Peek(0x7C)
