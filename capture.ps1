@@ -20,6 +20,7 @@ param(
     [int]$HookMode = 2,   # 2 = the hook; 1 = only the memory and the code, 3 = the hook without stopping the threads (tests)
     [switch]$NoFineTick,    # the frame time stays in steps of 15.6 ms of GetTickCount (docs/frame-time.md)
     [switch]$NoKeyRepeat,   # no repeats of the held keys from the hook (docs/input-latency.md)
+    [switch]$Launch,    # capture.ps1 starts ENGINE.exe itself, suspended: the window is made with the frame, in the centre, at once (frame=3)
     [switch]$NoHook     # no overlay.bin in the game: the counter and the messages are windows on top (they are seen for a frame only)
 )
 $ErrorActionPreference = "Stop"
@@ -109,6 +110,28 @@ public static class GameHook {
     [DllImport("psapi.dll", CharSet = CharSet.Ansi)] static extern int GetModuleFileNameExA(IntPtr p, IntPtr mod, StringBuilder name, int size);
     const int Data = 0x7E000000, Code = 0x7E001000, Site = 0x420C0A;   // the call of FUN_0040a2a0 (end of the frame) in Realize_Layers: E8 91 96 FE FF
     static IntPtr proc; static int procId;
+    // the game is started suspended: the call of CreateWindowExA is patched before its first instruction (the imports are not yet resolved, so the call site is patched, not the slot)
+    [StructLayout(LayoutKind.Sequential)] struct STARTUPINFO { public int cb; public string r1, desk, title; public int x, y, xs, ys, xc, yc, fill, flags; public short show, r2; public IntPtr r3, hin, hout, herr; }
+    [StructLayout(LayoutKind.Sequential)] struct PROCINFO { public IntPtr hProcess, hThread; public int pid, tid; }
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CreateProcessW(string app, string cmd, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string dir, ref STARTUPINFO si, out PROCINFO pi);
+    static IntPtr launchThread;
+    public static int Launch(string exe, string dir) {
+        STARTUPINFO si = new STARTUPINFO(); si.cb = Marshal.SizeOf(si); PROCINFO pi;
+        if (!CreateProcessW(exe, "\"" + exe + "\"", IntPtr.Zero, IntPtr.Zero, false, 4, IntPtr.Zero, dir, ref si, out pi)) return -Marshal.GetLastWin32Error();
+        launchThread = pi.hThread; CloseHandle(pi.hProcess); return pi.pid;
+    }
+    public static void Resume() { if (launchThread != IntPtr.Zero) { ResumeThread(launchThread); CloseHandle(launchThread); launchThread = IntPtr.Zero; } }
+    // call [0x431194] at 0x417BD8 (CreateWindowExA of the window of the game) -> call create_fix (overlay.c)
+    public static bool PatchCreate() {
+        const int At = 0x417BD8; byte[] b = new byte[6]; int n; uint old;
+        if (proc == IntPtr.Zero || !ReadProcessMemory(proc, (IntPtr)At, b, 6, out n) || b[0] != 0xFF || b[1] != 0x15 || BitConverter.ToInt32(b, 2) != 0x431194) return false;
+        byte[] p = new byte[6]; p[0] = 0xE8; Array.Copy(BitConverter.GetBytes(Code + 0x4000 - (At + 5)), 0, p, 1, 4); p[5] = 0x90;
+        VirtualProtectEx(proc, (IntPtr)At, (UIntPtr)6, 0x40, out old);
+        bool ok = WriteProcessMemory(proc, (IntPtr)At, p, 6, out n);
+        VirtualProtectEx(proc, (IntPtr)At, (UIntPtr)6, old, out old);
+        FlushInstructionCache(proc, (IntPtr)At, (UIntPtr)6);
+        return ok;
+    }
     public static string Install(int pid, byte[] code, int mode) {
         procId = pid; proc = OpenProcess(0x438, false, pid);   // VM operation, read, write, query information (the modules)
         if (proc == IntPtr.Zero) return "OpenProcess failed: " + Marshal.GetLastWin32Error();
@@ -683,7 +706,13 @@ function Read-Fps($s) {
     }
 }
 
-$game = Wait-Game
+$launched = $false
+if ($Launch -and -not (Get-Process ENGINE -ErrorAction SilentlyContinue)) {
+    $lp = [GameHook]::Launch((Join-Path $GameDir "ENGINE.exe"), $GameDir)
+    if ($lp -gt 0) { $game = Get-Process -Id $lp; $launched = $true; Log "game launched suspended (pid $lp)" }
+    else { Log "launch failed ($lp): waiting for a game started by hand" }
+}
+if (-not $launched) { $game = Wait-Game }
 $stale = @(Get-Process ENGINE -ErrorAction SilentlyContinue | ? { $_.Id -ne $game.Id }); if ($stale.Count) { Log "WARNING: another ENGINE.exe is running (pid $($stale.Id -join ', ')): two copies of the game fight over DDrawCompat, the picture then freezes (FPS 0); close it in the Task Manager" }
 $gameProc = $game
 Log "game started (pid $($game.Id)); F8 screenshot, F9 video, F10 fps on/off, fps every 5 s, on screen: $ShowFps"
@@ -703,6 +732,27 @@ if (-not $NoHook -and (Test-Path $binFile)) {
         $script:fpsPos = $px, $py
         [void][GameHook]::Poke(0, [BitConverter]::GetBytes($px) + [BitConverter]::GetBytes($py))
         Log "hook: drawing inside the game, counter at $px,$py"
+        if ($launched -and $Cfg.frame -eq 3) {   # the window of the game is made with the frame in the centre: the numbers are those of Set-Frame
+            $wa = [Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+            $fx = [CapNative]::GetSystemMetrics(7); $fy = [CapNative]::GetSystemMetrics(8); $cap = [CapNative]::GetSystemMetrics(4)
+            $ints = @($fx, ($fy + $cap), (2 * $fx), (2 * $fy + $cap)); $script:ints = $ints
+            $cx = $wa.X + [Math]::Max(0, [int](($wa.Width - 800) / 2)); $cy = $wa.Y + [Math]::Max($ints[1], [int](($wa.Height - 600) / 2))
+            $iv = @($ints[0], $ints[1], $ints[2], $ints[3]) + @($cx, $cy)
+            [void][GameHook]::Poke(0x900, ($ints | % { [BitConverter]::GetBytes([int]$_) } | % { $_ }))
+            [void][GameHook]::Poke(0xC8, [BitConverter]::GetBytes([int]$cx) + [BitConverter]::GetBytes([int]$cy))
+            [void][GameHook]::Poke(0x910, [BitConverter]::GetBytes([int]1) + [BitConverter]::GetBytes([int]0x00CA0000))
+            $okc = [GameHook]::PatchCreate(); Log "create window fix: $okc, client at $cx,$cy, frame $($ints -join ',')"
+        }
+    }
+}
+if ($launched) {
+    [GameHook]::Resume()
+    if ($hooked -and $Cfg.frame -eq 3) {   # the imports are resolved a moment after the start: the redirects (MoveWindow of the game puts the window in the corner) are done before it gets there
+        $t0 = Get-Date
+        while (((Get-Date) - $t0).TotalSeconds -lt 10 -and -not $script:cursorFixed) {
+            $iat = [GameHook]::PeekAbs(0x43116C)
+            if ($iat -gt 0x10000000) { $script:cursorFixed = [GameHook]::WindowFix(); Log "window fix at start: $($script:cursorFixed)" } else { Start-Sleep -Milliseconds 2 }
+        }
     }
 }
 $toast = New-Object Toast

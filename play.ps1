@@ -9,8 +9,9 @@ $pa = @{}; if ($Mode) { $pa.Mode = $Mode }
 $cap = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-STA", "-WindowStyle", "Hidden", "-File", (Join-Path $PSScriptRoot "capture.ps1"), "-GameDir", $GameDir)
 if ($NoKeyRepeat) { $cap += "-NoKeyRepeat" }
 if ($NoFineTick) { $cap += "-NoFineTick" }
+$cap += "-Launch"   # capture.ps1 starts the game itself, suspended (the window is made with the frame at once)
 $psi = New-Object Diagnostics.ProcessStartInfo "powershell.exe"
 $psi.Arguments = ($cap | ForEach-Object { if ($_ -match "\s") { "`"$_`"" } else { $_ } }) -join " "
 $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
 [void][Diagnostics.Process]::Start($psi)
-Start-Process (Join-Path $GameDir "ENGINE.exe") -WorkingDirectory $GameDir
+

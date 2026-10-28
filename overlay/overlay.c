@@ -16,6 +16,7 @@
  *   +0xC4 the real SetCursorPos, +0xD0 the real MoveWindow (move_fix = code+0x3000, slot 0x43116C), +0xC8/+0xCC the origin of the game window on the screen, +0xD4 1 = hook() calls the real MoveWindow to put the window (DAT_0044d704) at +0xC8/+0xCC (capture.ps1 points the IAT slot 0x43119C at cursor_fix = code+0x80 in a moved window)
  *   +0xD8 the real Blt (slot 0x14 of the vtable of the primary surface), blt_fix = code+0x1000 (capture.ps1 points the slot at it in a moved window)
  *   +0x900/+0x904 the client area from the outer corner of the window with a real frame (frame=3), +0x908/+0x90C the width/height the frame adds: move_fix and the move of hook() put the outer rectangle so that the client area is the size of the game
+ *   +0x910 1 = create_fix (code+0x4000, the call 0x417BD8 of CreateWindowExA) makes the window with the style +0x914 at the client origin +0xC8/+0xCC
  *   +0xF8 the real GetCursorPos, cursor_get = code+0x2000 (capture.ps1 points the import of GetCursorPos of the loaded modules of the game at it in a moved window)
  *   +0xF4 frame limit N fps (0 = none): hook() waits until 1/N s have passed since the previous frame (DDrawCompat's FpsLimiter does not touch a window that is drawn with Blt)
  *   +0xA0 key repeat on (0/1, capture.ps1 writes 1 while the game is the window in front); +0x500 unsigned hold[256]: GetTickCount of the key press (0 = up)
@@ -238,4 +239,16 @@ __attribute__((stdcall, aligned(8192))) int cursor_get(int *pt)
 __attribute__((stdcall, aligned(4096))) int move_fix(void *h, int x, int y, int w, int ht, int repaint)
 {
     return ((int (__attribute__((stdcall)) *)(void *, int, int, int, int, int))DATA[0xD0 / 4])(h, x + DATA[0xC8 / 4] - DATA[0x900 / 4], y + DATA[0xCC / 4] - DATA[0x904 / 4], w + DATA[0x908 / 4], ht + DATA[0x90C / 4], repaint);
+}
+
+/* CreateWindowExA of the game (the call at 0x417BD8, capture.ps1 patches it before the game runs): with a real frame (+0x910 = 1) the window is made at once with the style +0x914,
+ * the client area at +0xC8/+0xCC and the outer rectangle that the frame adds (+0x900.., +0x908..): no flash in the corner. The real function is the import slot 0x431194. */
+__attribute__((stdcall, aligned(4096))) void *create_fix(int ex, const char *cls, const char *name, unsigned style, int x, int y, int w, int h, void *parent, void *menu, void *inst, void *param)
+{
+    if (DATA[0x910 / 4]) {
+        style = (unsigned)DATA[0x914 / 4];
+        x = DATA[0xC8 / 4] - DATA[0x900 / 4]; y = DATA[0xCC / 4] - DATA[0x904 / 4];
+        w += DATA[0x908 / 4]; h += DATA[0x90C / 4];
+    }
+    return ((void *(__attribute__((stdcall)) *)(int, const char *, const char *, unsigned, int, int, int, int, void *, void *, void *, void *))*(void *volatile *)0x431194)(ex, cls, name, style, x, y, w, h, parent, menu, inst, param);
 }
