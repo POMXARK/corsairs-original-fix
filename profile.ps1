@@ -1,5 +1,5 @@
 ﻿<#
-Sets the latency profile and the FPS limit of the game before it starts (play.cmd calls it); the values come from fix.ini of the settings window, -Mode overrides lowlag:
+Sets the latency profile and the FPS limit of the game before it starts (play.vbs starts it); the values come from fix.ini of the settings window, -Mode overrides lowlag:
   lowlag=0  DDrawCompat.ini as the installer made it, SLEEP_TIME 2 (the original)
   lowlag=1  + VSync=off (no frame waits for the screen, tearing is possible) and SLEEP_TIME 0 in engine.ini (the engine does not sleep in its loop)
   fpslimit=N  FpsLimiter=flipstart(N) of DDrawCompat, 0 = no limit

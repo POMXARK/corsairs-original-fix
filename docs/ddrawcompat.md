@@ -28,12 +28,12 @@
 
 - `DesktopColorDepth=16`, `DisplayAspectRatio=app`, `FullscreenMode=borderless`, `SupportedResolutions=…` — в `DDrawCompat.ini` репозитория.
 - `FpsLimiter=off|flipstart(N)|flipend(N)|msgloop(N)` (N от 10 до 200) — ограничитель частоты кадров. Мы пробовали `flipstart(60)` против фризов: кадры стали ровнее по среднему, но скачки остались, и потолок 60 мы убрали.
-- `VSync=app|on(N)|wait(N)|off` — вертикальная синхронизация; `off` даёт минимум задержки ввода, но возможны разрывы картинки. Включается профилем `play-lowlag.cmd` (см. ниже).
+- `VSync=app|on(N)|wait(N)|off` — вертикальная синхронизация; `off` даёт минимум задержки ввода, но возможны разрывы картинки. Включается профилем `play.vbs lowlag` (см. ниже).
 - `StatsRows` и другие настройки показа статистики — не используются.
 
 ## Профили задержки
 
-`play.cmd` — обычный запуск (`SLEEP_TIME 2` в `engine.ini`, `VSync` не задан, DDrawCompat решает сам). `play-lowlag.cmd` — минимальная задержка: перед запуском `profile.ps1` дописывает `VSync=off` в `DDrawCompat.ini` и ставит `SLEEP_TIME 0` в `engine.ini`. Следующий запуск через `play.cmd` возвращает обычные значения. Ярлыки на рабочем столе: «Корсары - игра (F8 F9 FPS)» и «Корсары - игра (минимум задержки)».
+`play.vbs` — обычный запуск (`SLEEP_TIME 2` в `engine.ini`, `VSync` не задан, DDrawCompat решает сам). `play.vbs lowlag` — минимальная задержка: перед запуском `profile.ps1` дописывает `VSync=off` в `DDrawCompat.ini` и ставит `SLEEP_TIME 0` в `engine.ini`. Следующий запуск через `play.vbs` возвращает обычные значения. Ярлыки на рабочем столе: «Корсары - игра (F8 F9 FPS)» и «Корсары - игра (минимум задержки)».
 
 ## А как же dgVoodoo2 («вуду»)?
 

@@ -36,8 +36,8 @@
 | `install.ps1` | Установщик. Находит игру, качает DDrawCompat 0.5.4 (сумма SHA-256 зашита), кладёт `ddraw.dll` и `DDrawCompat.ini`, правит `engine.ini` (16 бит, размер окна), увеличивает шрифты в `fonts.ini`, копирует рабочие файлы в `<игра>\fix\`, создаёт три ярлыка на рабочем столе. Каждый изменённый файл сохраняет как `<имя>.orig`; `-Uninstall` возвращает оригиналы |
 | `DDrawCompat.ini` | Настройки DDrawCompat: 16-битный цвет, разрешения для списка, соотношение сторон. Копируется рядом с игрой |
 | `settings.ps1` | Окно настроек (Windows Forms): разрешение, тип окна (в углу / полоса / настоящая рамка), пропуск заставок, звук видео, лимит FPS, счётчик, ходьба на WASD и т. д. Пишет `fix\fix.ini` и по кнопке запускает игру |
-| `settings.cmd`, `settings.vbs` | Запуск `settings.ps1` без чёрного консольного окна и с правами администратора (игра лежит в Program Files) |
-| `play.cmd`, `play-lowlag.cmd`, `play.vbs` | Запуск игры тем же способом. `lowlag` — профиль минимальной задержки |
+| `settings.vbs` | Запуск `settings.ps1` без чёрного консольного окна и с правами администратора (игра лежит в Program Files) |
+| `play.vbs` | Запуск игры тем же способом. `lowlag` — профиль минимальной задержки |
 | `play.ps1` | Запуск: применяет профиль, стартует `capture.ps1` с ключом `-Launch`. Саму игру теперь запускает `capture.ps1` |
 | `profile.ps1` | Перед стартом пишет VSync, `FpsLimiter` (в `DDrawCompat.ini`) и `SLEEP_TIME` (в `engine.ini`) по значениям `fix.ini` |
 | `capture.ps1` | **Главный файл (≈900 строк).** Запускает игру приостановленной, ставит оверлей и патчи, держит главный цикл: окно, курсор, скриншоты F8, видео F9 (ffmpeg + звук), счётчик FPS (PresentMon), пропуск заставок, автотесты. Внутри C#-код (`Add-Type`) для вызовов Windows API |
@@ -47,7 +47,7 @@
 | `docs/` | Журналы и пояснения; этот файл — общий обзор |
 | `README.md`, `LICENSE` | Описание и лицензия |
 
-Что копируется в `<игра>\fix\`: `install.ps1, settings.ps1, settings.cmd, capture.ps1, overlay.bin, play.cmd, play-lowlag.cmd, play.ps1, play.vbs, settings.vbs, profile.ps1, DDrawCompat.ini`. После установки папку с репозиторием можно удалить.
+Что копируется в `<игра>\fix\`: `install.ps1, settings.ps1, capture.ps1, overlay.bin, play.ps1, play.vbs, settings.vbs, profile.ps1, DDrawCompat.ini`. После установки папку с репозиторием можно удалить.
 
 ## 4. Как это запускается (по шагам)
 

@@ -1,4 +1,4 @@
-﻿# Окно настроек оригинальных «Корсаров»: разрешение, режим экрана, размер шрифта. Запуск: settings.cmd
+﻿# Окно настроек оригинальных «Корсаров»: разрешение, режим экрана, размер шрифта. Запуск: settings.vbs
 # Всё делает install.ps1 (он идемпотентен), здесь только форма: читает текущие значения, вызывает install.ps1 с ключами.
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path

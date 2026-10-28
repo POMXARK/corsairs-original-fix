@@ -1,6 +1,6 @@
 ﻿<#
 Screenshots, screen recording and an FPS log for the original game, as F8 / F9 and show_fps of the new engine.
-Runs next to the game and ends with it (play.cmd starts both):
+Runs next to the game and ends with it (play.vbs starts both):
 
   F8   a screenshot to Documents\My Games\Sea Dogs\Screenshots\<date>.jpg
   F10  the counter and the graph on/off

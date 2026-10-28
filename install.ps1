@@ -127,7 +127,7 @@ if ($Wasd) { Write-Host "walking: W A S D" }
 $tools = Join-Path $GameDir "fix"
 if ($Here -ne $tools) {
     New-Item $tools -ItemType Directory -Force | Out-Null
-    foreach ($n in "install.ps1", "settings.ps1", "settings.cmd", "capture.ps1", "overlay.bin", "play.cmd", "play-lowlag.cmd", "play.ps1", "play.vbs", "settings.vbs", "profile.ps1", "DDrawCompat.ini") { Copy-Item (Join-Path $Here $n) $tools -Force }
+    foreach ($n in "install.ps1", "settings.ps1", "capture.ps1", "overlay.bin", "play.ps1", "play.vbs", "settings.vbs", "profile.ps1", "DDrawCompat.ini") { Copy-Item (Join-Path $Here $n) $tools -Force }
 }
 $lnk = Join-Path ([Environment]::GetFolderPath("CommonDesktopDirectory")) "Корсары - настройки.lnk"
 $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
@@ -141,5 +141,5 @@ $lnk3 = Join-Path ([Environment]::GetFolderPath("CommonDesktopDirectory")) "Ко
 $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk3)
 $sc.TargetPath = "wscript.exe"; $sc.Arguments = "`"$(Join-Path $tools "play.vbs")`" lowlag"; $sc.WorkingDirectory = $tools
 $sc.IconLocation = (Join-Path $GameDir "ENGINE.exe") + ",0"; $sc.Save()
-Write-Host "settings: $tools\settings.cmd, shortcut on the desktop"
+Write-Host "settings: $tools\settings.vbs, shortcut on the desktop"
 Write-Host "done: DDrawCompat $DdVersion, engine.ini BPP 16, $Width x $Height" ($(if ($Windowed) { "windowed" } else { "fullscreen" }))
