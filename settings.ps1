@@ -53,7 +53,7 @@ if ((Test-Path $fonts) -and (Test-Path $origFonts)) {
 $f = New-Object Windows.Forms.Form
 $f.Text = "Установки ""Корсаров"""
 $f.AutoScaleMode = "None"
-$f.ClientSize = New-Object Drawing.Size(422, 404)
+$f.ClientSize = New-Object Drawing.Size(422, 614)
 $f.StartPosition = "CenterScreen"
 $f.FormBorderStyle = "FixedDialog"; $f.MaximizeBox = $false; $f.MinimizeBox = $false
 $f.Font = New-Object Drawing.Font("Tahoma", 8.25)
@@ -85,6 +85,11 @@ $auto.Add_CheckedChanged({ $nud.Enabled = -not $auto.Checked })
 $chWasd = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 126 290 22
 $chWasd.Text = "Ходьба в городе на W A S D"; $chWasd.Checked = $curWasd
 
+# fix.ini: настройки наших патчей, их читают profile.ps1 (задержка, лимит FPS) и capture.ps1 (хук, логи, снимки, видео)
+$cfgPath = Join-Path $Here "fix.ini"
+$cfg = [ordered]@{ lowlag = 1; fpslimit = 0; keyrepeat = 1; finetick = 0; screenshots = 1; video = 1; fpslog = 1; osd = 1; statlog = 1 }
+if (Test-Path $cfgPath) { foreach ($l in [IO.File]::ReadAllLines($cfgPath)) { if ($l -match "^\s*(\w+)\s*=\s*(\d+)\s*$" -and $cfg.Contains($Matches[1])) { $cfg[$Matches[1]] = [int]$Matches[2] } } }
+
 # счётчик FPS: место и размер задаются на миниатюре экрана; fix\osd.ini читает capture.ps1
 $osdPath = Join-Path $Here "osd.ini"
 $osd = @{ x = 0.0; y = 0.0; size = 14 }
@@ -93,16 +98,12 @@ if (Test-Path $osdPath) {
         if ($l -match "^(x|y|size)=([0-9.]+)$") { $osd[$Matches[1]] = [double]::Parse($Matches[2], [Globalization.CultureInfo]::InvariantCulture) }
     }
 }
-$g2 = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 168 316 182 0
-$g2.Text = "Снимки, запись, счётчик FPS"
-$chCap = Add-Ctl $g2 (New-Object Windows.Forms.CheckBox) 12 20 130 22
-$chCap.Text = "F8 снимок, F9 запись"; $chCap.Checked = $true
-$chLog = Add-Ctl $g2 (New-Object Windows.Forms.CheckBox) 12 44 130 22
-$chLog.Text = "Писать FPS в лог"; $chLog.Checked = $true
-$chOsd = Add-Ctl $g2 (New-Object Windows.Forms.CheckBox) 12 68 130 22
-$chOsd.Text = "FPS на экране"; $chOsd.Checked = $true
-$null = Add-Ctl $g2 (New-Text "Размер") 12 98 50 22
-$nudOsd = Add-Ctl $g2 (New-Object Windows.Forms.NumericUpDown) 66 98 60 22
+$g2 = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 168 316 168 0
+$g2.Text = "Счётчик FPS"
+$chOsd = Add-Ctl $g2 (New-Object Windows.Forms.CheckBox) 12 20 130 22
+$chOsd.Text = "FPS и график (F10)"; $chOsd.Checked = [bool]$cfg.osd; $chOsd.Width = 146
+$null = Add-Ctl $g2 (New-Text "Размер") 12 50 50 22
+$nudOsd = Add-Ctl $g2 (New-Object Windows.Forms.NumericUpDown) 66 50 60 22
 $nudOsd.Minimum = 8; $nudOsd.Maximum = 96; $nudOsd.Value = [decimal][Math]::Min(96, [Math]::Max(8, $osd.size))
 
 # миниатюра экрана с той же пропорцией, что у рабочего стола; квадрат - счётчик, щелчок или перетаскивание двигают его
@@ -139,7 +140,7 @@ $pan.Add_MouseUp({ Save-Osd })   # положение запоминается �
 $nudOsd.Add_ValueChanged({ $pan.Invalidate(); Save-Osd })
 
 # готовые места
-$cbPlace = Add-Ctl $g2 (New-Object Windows.Forms.ComboBox) 12 152 138 22
+$cbPlace = Add-Ctl $g2 (New-Object Windows.Forms.ComboBox) 12 116 138 22
 $cbPlace.DropDownStyle = "DropDownList"
 $places = [ordered]@{ "Слева вверху" = @(0, 0); "Вверху по центру" = @(0.5, 0); "Справа вверху" = @(1, 0); "Слева по центру" = @(0, 0.5); "По центру" = @(0.5, 0.5); "Справа по центру" = @(1, 0.5); "Слева внизу" = @(0, 1); "Внизу по центру" = @(0.5, 1); "Справа внизу" = @(1, 1) }
 $cbPlace.Items.AddRange(@($places.Keys))
@@ -179,11 +180,32 @@ function Show-OsdPlacer {
     Save-Osd
     $status.Text = "Место счётчика сохранено"
 }
-$bPlace = Add-Ctl $g2 (New-Object Windows.Forms.Button) 12 122 138 24
+$bPlace = Add-Ctl $g2 (New-Object Windows.Forms.Button) 12 84 138 24
 $bPlace.Text = "Разместить на экране"
 $bPlace.Add_Click({ [void][Windows.Forms.MessageBox]::Show("Счётчик появится на рабочем столе: зажмите его мышью и перетащите. Esc или двойной щелчок - готово.", "FPS"); Show-OsdPlacer })
 
-$status = Add-Ctl $f (New-Object Windows.Forms.Label) 8 356 316 44 0
+$g3 = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 340 316 220 0
+$g3.Text = "Задержка, ввод, логи, снимки"
+function Add-Check($text, $y, $on, $tip) {
+    $c = Add-Ctl $g3 (New-Object Windows.Forms.CheckBox) 12 $y 296 22
+    $c.Text = $text; $c.Checked = [bool]$on; $tip1.SetToolTip($c, $tip); return $c
+}
+$tip1 = New-Object Windows.Forms.ToolTip; $tip1.AutoPopDelay = 20000
+$chLow = Add-Check "Минимум задержки (VSync выкл., без Sleep)" 20 $cfg.lowlag "VSync=off в DDrawCompat.ini и SLEEP_TIME 0 в engine.ini: кадр не ждёт экран. Возможны разрывы картинки."
+$chKeys = Add-Check "Повтор зажатых клавиш (без паузы)" 44 $cfg.keyrepeat "Хук игры сам повторяет зажатые стрелки, пробел и A-Z: убирает паузу автоповтора Windows (docs/input-latency.md)."
+$chFine = Add-Check "Точный таймер кадра (экспериментально)" 68 $cfg.finetick "Время кадра по TSC вместо GetTickCount (шаг 15,6 мс). На этой игре давало инерцию после отпускания клавиши: по умолчанию выкл. (docs/frame-time.md)."
+$chShot = Add-Check "F8: снимок экрана" 92 $cfg.screenshots "Скриншот в Документы\My Games\Sea Dogs\Screenshots"
+$chVid = Add-Check "F9: запись видео" 116 $cfg.video "ffmpeg пишет рабочий стол в Screenshots; F9 ещё раз - стоп."
+$chLog = Add-Check "Писать FPS в лог (fps.log)" 140 $cfg.fpslog "Строка статистики раз в 5 секунд в Документы\My Games\Sea Dogs\Logs\fps.log"
+$chStat = Add-Check "Строки статистики в логе (F11)" 164 $cfg.statlog "Если выкл., в логе остаются только события: снимки, видео, ошибки."
+$null = Add-Ctl $g3 (New-Text "Лимит FPS") 12 192 70 22
+$cbFps = Add-Ctl $g3 (New-Object Windows.Forms.ComboBox) 86 192 130 22
+$cbFps.Items.AddRange(@("Без ограничения", "30", "45", "60", "75", "90", "120", "144", "165", "240"))
+$cbFps.Text = if ($cfg.fpslimit -gt 0) { "$($cfg.fpslimit)" } else { "Без ограничения" }
+$tip1.SetToolTip($cbFps, "FpsLimiter=flipstart(N) в DDrawCompat.ini. Число можно ввести своё.")
+$null = Add-Ctl $g3 (New-Text "кадров/с") 222 192 70 22
+
+$status = Add-Ctl $f (New-Object Windows.Forms.Label) 8 566 316 44 0
 $status.Text = "Игра: $GameDir"
 
 function Save-Osd {
@@ -191,8 +213,16 @@ function Save-Osd {
     [IO.File]::WriteAllLines($osdPath, @("x=" + ([double]$osd.x).ToString("0.000", $inv), "y=" + ([double]$osd.y).ToString("0.000", $inv), "size=" + [int]$nudOsd.Value))
 }
 
+function Save-Cfg {
+    $lim = [regex]::Match("$($cbFps.Text)", "\d+").Value
+    $cfg.lowlag = [int]$chLow.Checked; $cfg.keyrepeat = [int]$chKeys.Checked; $cfg.finetick = [int]$chFine.Checked
+    $cfg.screenshots = [int]$chShot.Checked; $cfg.video = [int]$chVid.Checked; $cfg.fpslog = [int]$chLog.Checked; $cfg.statlog = [int]$chStat.Checked
+    $cfg.osd = [int]$chOsd.Checked; $cfg.fpslimit = $(if ($lim) { [Math]::Min(1000, [int]$lim) } else { 0 })
+    [IO.File]::WriteAllLines($cfgPath, @($cfg.Keys | ForEach-Object { "$_=$($cfg[$_])" }))
+}
+
 function Apply-Settings([switch]$Launch) {
-    Save-Osd
+    Save-Osd; Save-Cfg
     $parts = "$($cbRes.Text)".Trim() -split "[xх×]"
     if ($parts.Count -ne 2 -or -not ($parts[0] -as [int]) -or -not ($parts[1] -as [int])) { $status.Text = "Разрешение вида 1920x1080"; return }
     $psArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $Install, "-GameDir", $GameDir, "-Width", [int]$parts[0], "-Height", [int]$parts[1])
@@ -204,13 +234,7 @@ function Apply-Settings([switch]$Launch) {
     if ($LASTEXITCODE -ne 0 -and $out -match "(?i)error|ошибк|exception") { $status.Text = "Ошибка: " + $out.Trim().Split("`n")[-1]; return $false }
     $status.Text = "Сохранено: $($cbRes.Text), шрифт ×$(if ($auto.Checked) { 'авто' } else { $nud.Value })"
     if ($Launch) {
-        if ($chCap.Checked) {
-            $capArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-STA", "-File", "`"$(Join-Path $Here "capture.ps1")`"", "-GameDir", "`"$GameDir`"")
-            if (-not $chLog.Checked) { $capArgs += "-NoFpsLog" }
-            if ($chOsd.Checked) { $capArgs += "-ShowFps" }
-            Start-Process powershell -WindowStyle Hidden -ArgumentList $capArgs
-        }
-        Start-Process (Join-Path $GameDir "ENGINE.exe") -WorkingDirectory $GameDir
+        Start-Process (Join-Path $Here "play.cmd")   # профиль, хук, логи и запись по fix.ini; просит права администратора для PresentMon
     }
 }
 

@@ -23,6 +23,15 @@ param(
     [switch]$NoHook     # no overlay.bin in the game: the counter and the messages are windows on top (they are seen for a frame only)
 )
 $ErrorActionPreference = "Stop"
+# fix.ini next to this script (written by the settings window): the switches of the patches, the logs, the screenshots and the video; the command line only adds "off" switches
+$Cfg = @{ keyrepeat = 1; finetick = 0; screenshots = 1; video = 1; fpslog = 1; osd = 1; statlog = 1 }
+$cfgFile = Join-Path $PSScriptRoot "fix.ini"
+if (Test-Path $cfgFile) { foreach ($l in [IO.File]::ReadAllLines($cfgFile)) { if ($l -match "^\s*(\w+)\s*=\s*(\d+)\s*$" -and $Cfg.ContainsKey($Matches[1])) { $Cfg[$Matches[1]] = [int]$Matches[2] } } }
+if (-not $Cfg.keyrepeat) { $NoKeyRepeat = [switch]$true }
+if (-not $Cfg.finetick) { $NoFineTick = [switch]$true }
+if (-not $Cfg.video) { $NoVideo = [switch]$true }
+if (-not $Cfg.fpslog) { $NoFpsLog = [switch]$true }
+if ($Cfg.osd) { $ShowFps = [switch]$true }
 $PmUrl = "https://github.com/GameTechDev/PresentMon/releases/download/v2.6.0/PresentMon-2.6.0-x64.exe"
 $PmSha256 = "b2a706bc6ad475749e3b7e3409263aa1e6906d45bdcf993f6dbc0f660188f1af"
 $FfUrl = "https://github.com/GyanD/codexffmpeg/releases/download/2026-10-22-git-bf0e831606/ffmpeg-2026-10-22-git-bf0e831606-essentials_build.zip"
@@ -164,7 +173,7 @@ if (Test-Path $osdFile) {
     }
 }
 
-$script:statLog = $true   # F11 stops the periodic statistics lines (osd, fps avg, hook frames); screenshots, videos and errors are still logged
+$script:statLog = [bool]$Cfg.statlog   # F11 stops the periodic statistics lines (osd, fps avg, hook frames); screenshots, videos and errors are still logged
 function Log($text) { if (-not $script:statLog -and $text -match "^(osd:|fps avg|hook: frames)") { return }; Add-Content $FpsLog ("{0:yyyy-MM-dd HH:mm:ss} {1}" -f (Get-Date), $text) -Encoding UTF8 }
 
 # in the game (overlay.bin hooked into ENGINE.exe) when it is there, else in a window on top
@@ -178,7 +187,7 @@ function Poke-Text($offset, $size, $text, [switch]$Raw) {
     [void][GameHook]::Poke($offset, $b)
 }
 $script:osdN = 0; $script:fpsText = ""; $script:msgText = ""; $script:msgPos = 0, 24
-$script:fpsShown = $true   # F10 shows and hides the counter
+$script:fpsShown = [bool]$Cfg.osd   # F10 shows and hides the counter
 function Show-Fps($text) {
     if (-not $script:fpsShown) { $text = "" }
     $script:fpsText = $text
@@ -353,7 +362,7 @@ while (-not $game.HasExited) {
     $focus = ($owner -eq $game.Id)   # the keys count only while the game is the window in front
     $d8 = $focus -and (([CapNative]::GetAsyncKeyState(0x77) -band 0x8000) -ne 0)
     $d9 = $focus -and (([CapNative]::GetAsyncKeyState(0x78) -band 0x8000) -ne 0)
-    if ($d8 -and -not $f8) {
+    if ($d8 -and -not $f8 -and $Cfg.screenshots) {
         try { $n = Join-Path $Shots ("{0:yyyy-MM-dd_HH-mm-ss}.jpg" -f (Get-Date)); Save-Screenshot $n; Log "screenshot $n"; Notify "Скриншот сохранён" ([Drawing.Color]::Lime) 2 "SCREENSHOT SAVED" }
         catch { Log "screenshot failed: $($_.Exception.Message)"; Notify "Скриншот не удался" ([Drawing.Color]::Red) 3 "SCREENSHOT FAILED" }
     }
