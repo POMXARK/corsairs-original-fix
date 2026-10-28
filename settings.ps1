@@ -45,73 +45,66 @@ if ((Test-Path $fonts) -and (Test-Path $origFonts)) {
     if ($a -and $b) { $inv = [Globalization.CultureInfo]::InvariantCulture; $curFont = [Math]::Round([double]::Parse($a, $inv) / [double]::Parse($b, $inv), 2) }
 }
 
+# вид как у Config.exe оригинала: серая форма, группа с полями слева, кнопки справа, мелкий шрифт
+[Windows.Forms.Application]::EnableVisualStyles()
 $f = New-Object Windows.Forms.Form
-$f.Text = "Корсары: настройки"
-$f.ClientSize = New-Object Drawing.Size(400, 250)
+$f.Text = "Установки ""Корсаров"""
+$f.AutoScaleMode = "None"
+$f.ClientSize = New-Object Drawing.Size(422, 214)
 $f.StartPosition = "CenterScreen"
-$f.FormBorderStyle = "FixedDialog"; $f.MaximizeBox = $false
-$f.Font = New-Object Drawing.Font("Segoe UI", 10)
+$f.FormBorderStyle = "FixedDialog"; $f.MaximizeBox = $false; $f.MinimizeBox = $false
+$f.Font = New-Object Drawing.Font("Tahoma", 8.25)
 
-function Add-Label($text, $y) { $l = New-Object Windows.Forms.Label; $l.Text = $text; $l.Location = New-Object Drawing.Point(16, $y + 3); $l.AutoSize = $true; $f.Controls.Add($l) }
+function Add-Ctl($parent, $ctl, $x, $y, $w, $h) {
+    $ctl.Location = New-Object Drawing.Point($x, $y); $ctl.Size = New-Object Drawing.Size($w, $h)
+    $parent.Controls.Add($ctl); return $ctl
+}
+function New-Text($text) { $l = New-Object Windows.Forms.Label; $l.Text = $text; $l.TextAlign = "MiddleLeft"; return $l }
 
-Add-Label "Разрешение" 16
-$cbRes = New-Object Windows.Forms.ComboBox
-$cbRes.Location = New-Object Drawing.Point(150, 16); $cbRes.Width = 230
+$g = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 4 316 150 0
+$g.Text = "Параметры визуализации"
+$null = Add-Ctl $g (New-Text "Разрешение") 12 26 90 22
+$cbRes = Add-Ctl $g (New-Object Windows.Forms.ComboBox) 110 26 190 22
 $cbRes.Items.AddRange($modes)
 $cbRes.Text = if ($curW -and $curH) { "${curW}x$curH" } else { $desktop }
-$f.Controls.Add($cbRes)
 
-Add-Label "Экран" 56
-$cbMode = New-Object Windows.Forms.ComboBox
-$cbMode.Location = New-Object Drawing.Point(150, 56); $cbMode.Width = 230; $cbMode.DropDownStyle = "DropDownList"
-[void]$cbMode.Items.AddRange(@("На весь экран", "В окне"))
-$cbMode.SelectedIndex = if ($curMode -eq "1") { 1 } else { 0 }
-$f.Controls.Add($cbMode)
+$chFull = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 62 140 20
+$chFull.Text = "Полный экран"; $chFull.Checked = ($curMode -ne "1")
 
-Add-Label "Размер шрифта" 96
-$nud = New-Object Windows.Forms.NumericUpDown
-$nud.Location = New-Object Drawing.Point(150, 96); $nud.Width = 80
+$null = Add-Ctl $g (New-Text "Размер шрифта") 12 96 96 22
+$nud = Add-Ctl $g (New-Object Windows.Forms.NumericUpDown) 110 96 60 22
 $nud.DecimalPlaces = 1; $nud.Increment = 0.1; $nud.Minimum = 0.5; $nud.Maximum = 4
 $nud.Value = [decimal][Math]::Min(4, [Math]::Max(0.5, $curFont))
-$f.Controls.Add($nud)
-$auto = New-Object Windows.Forms.CheckBox
-$auto.Text = "по экрану"; $auto.Location = New-Object Drawing.Point(250, 96); $auto.AutoSize = $true
+$auto = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 184 96 116 22
+$auto.Text = "по экрану"
 $auto.Add_CheckedChanged({ $nud.Enabled = -not $auto.Checked })
-$f.Controls.Add($auto)
 
-$status = New-Object Windows.Forms.Label
-$status.Location = New-Object Drawing.Point(16, 140); $status.Size = New-Object Drawing.Size(370, 40)
+$status = Add-Ctl $f (New-Object Windows.Forms.Label) 8 164 316 44 0
 $status.Text = "Игра: $GameDir"
-$f.Controls.Add($status)
 
 function Apply-Settings([switch]$Launch) {
     $parts = "$($cbRes.Text)".Trim() -split "[xх×]"
     if ($parts.Count -ne 2 -or -not ($parts[0] -as [int]) -or -not ($parts[1] -as [int])) { $status.Text = "Разрешение вида 1920x1080"; return }
     $psArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $Install, "-GameDir", $GameDir, "-Width", [int]$parts[0], "-Height", [int]$parts[1])
-    if ($cbMode.SelectedIndex -eq 1) { $psArgs += "-Windowed" }
+    if (-not $chFull.Checked) { $psArgs += "-Windowed" }
     $psArgs += @("-FontScale", $(if ($auto.Checked) { "0" } else { ([double]$nud.Value).ToString([Globalization.CultureInfo]::InvariantCulture) }))
     $status.Text = "Применяю..."; $f.Refresh()
-    $out = & powershell @args 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0 -and $out -match "(?i)error|ошибк|exception") { $status.Text = "Ошибка: " + $out.Trim().Split("`n")[-1]; return }
-    $status.Text = "Готово: $($cbRes.Text), шрифт ×$(if ($auto.Checked) { 'авто' } else { $nud.Value })"
+    $out = & powershell @psArgs 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0 -and $out -match "(?i)error|ошибк|exception") { $status.Text = "Ошибка: " + $out.Trim().Split("`n")[-1]; return $false }
+    $status.Text = "Сохранено: $($cbRes.Text), шрифт ×$(if ($auto.Checked) { 'авто' } else { $nud.Value })"
     if ($Launch) { Start-Process (Join-Path $GameDir "ENGINE.exe") -WorkingDirectory $GameDir }
 }
 
-$btn = New-Object Windows.Forms.Button
-$btn.Text = "Применить"; $btn.Location = New-Object Drawing.Point(16, 195); $btn.Size = New-Object Drawing.Size(115, 36)
-$btn.Add_Click({ Apply-Settings })
-$f.Controls.Add($btn)
-$btnGo = New-Object Windows.Forms.Button
-$btnGo.Text = "Применить и играть"; $btnGo.Location = New-Object Drawing.Point(140, 195); $btnGo.Size = New-Object Drawing.Size(150, 36)
-$btnGo.Add_Click({ Apply-Settings -Launch })
-$f.Controls.Add($btnGo)
-$btnOff = New-Object Windows.Forms.Button
-$btnOff.Text = "Вернуть оригинал"; $btnOff.Location = New-Object Drawing.Point(298, 195); $btnOff.Size = New-Object Drawing.Size(86, 36)
-$btnOff.Font = New-Object Drawing.Font("Segoe UI", 8)
-$btnOff.Add_Click({
+$b1 = Add-Ctl $f (New-Object Windows.Forms.Button) 334 12 80 26; $b1.Text = "Сохранить"
+$b1.Add_Click({ Apply-Settings })
+$b2 = Add-Ctl $f (New-Object Windows.Forms.Button) 334 44 80 26; $b2.Text = "Играть"
+$b2.Add_Click({ Apply-Settings -Launch })
+$b3 = Add-Ctl $f (New-Object Windows.Forms.Button) 334 76 80 26; $b3.Text = "Сбросить"
+$b3.Add_Click({
     & powershell -NoProfile -ExecutionPolicy Bypass -File $Install -GameDir $GameDir -Uninstall | Out-Null
-    $status.Text = "Оригинальные файлы возвращены"
+    $status.Text = "Оригинальные файлы игры возвращены"
 })
-$f.Controls.Add($btnOff)
+$b4 = Add-Ctl $f (New-Object Windows.Forms.Button) 334 108 80 26; $b4.Text = "Закрыть"
+$b4.Add_Click({ $f.Close() })
 
 [void]$f.ShowDialog()
