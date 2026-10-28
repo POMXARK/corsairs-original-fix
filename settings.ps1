@@ -53,7 +53,7 @@ if ((Test-Path $fonts) -and (Test-Path $origFonts)) {
 $f = New-Object Windows.Forms.Form
 $f.Text = "Установки ""Корсаров"""
 $f.AutoScaleMode = "None"
-$f.ClientSize = New-Object Drawing.Size(422, 372)
+$f.ClientSize = New-Object Drawing.Size(422, 404)
 $f.StartPosition = "CenterScreen"
 $f.FormBorderStyle = "FixedDialog"; $f.MaximizeBox = $false; $f.MinimizeBox = $false
 $f.Font = New-Object Drawing.Font("Tahoma", 8.25)
@@ -93,7 +93,7 @@ if (Test-Path $osdPath) {
         if ($l -match "^(x|y|size)=([0-9.]+)$") { $osd[$Matches[1]] = [double]::Parse($Matches[2], [Globalization.CultureInfo]::InvariantCulture) }
     }
 }
-$g2 = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 168 316 150 0
+$g2 = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 168 316 182 0
 $g2.Text = "Снимки, запись, счётчик FPS"
 $chCap = Add-Ctl $g2 (New-Object Windows.Forms.CheckBox) 12 20 130 22
 $chCap.Text = "F8 снимок, F9 запись"; $chCap.Checked = $true
@@ -120,6 +120,9 @@ $pan.Add_Paint({
     param($s, $e)
     $b = Get-OsdBox
     $x = [int]($osd.x * ($pan.ClientSize.Width - $b[0])); $y = [int]($osd.y * ($pan.ClientSize.Height - $b[1]))
+    foreach ($ax in 0, 0.5, 1) { foreach ($ay in 0, 0.5, 1) {   # 9 места, к которым щелчок "прилипает"
+        $e.Graphics.FillEllipse([Drawing.Brushes]::Gray, [int]($ax * ($pan.ClientSize.Width - $b[0]) + $b[0] / 2 - 2), [int]($ay * ($pan.ClientSize.Height - $b[1]) + $b[1] / 2 - 2), 4, 4)
+    } }
     $e.Graphics.FillRectangle([Drawing.Brushes]::Lime, $x, $y, $b[0], $b[1])
 })
 $moveOsd = {
@@ -128,10 +131,19 @@ $moveOsd = {
     $b = Get-OsdBox
     $osd.x = [Math]::Min(1, [Math]::Max(0, ($e.X - $b[0] / 2) / [Math]::Max(1, $pan.ClientSize.Width - $b[0])))
     $osd.y = [Math]::Min(1, [Math]::Max(0, ($e.Y - $b[1] / 2) / [Math]::Max(1, $pan.ClientSize.Height - $b[1])))
+    foreach ($k in "x", "y") { foreach ($a in 0, 0.5, 1) { if ([Math]::Abs($osd[$k] - $a) -lt 0.07) { $osd[$k] = $a } } }   # прилипание к краям и центру
     $pan.Invalidate()
 }
 $pan.Add_MouseDown($moveOsd); $pan.Add_MouseMove($moveOsd)
-$nudOsd.Add_ValueChanged({ $pan.Invalidate() })
+$pan.Add_MouseUp({ Save-Osd })   # положение запоминается сразу, без кнопки «Сохранить»
+$nudOsd.Add_ValueChanged({ $pan.Invalidate(); Save-Osd })
+
+# готовые места
+$cbPlace = Add-Ctl $g2 (New-Object Windows.Forms.ComboBox) 12 152 138 22
+$cbPlace.DropDownStyle = "DropDownList"
+$places = [ordered]@{ "Слева вверху" = @(0, 0); "Вверху по центру" = @(0.5, 0); "Справа вверху" = @(1, 0); "Слева по центру" = @(0, 0.5); "По центру" = @(0.5, 0.5); "Справа по центру" = @(1, 0.5); "Слева внизу" = @(0, 1); "Внизу по центру" = @(0.5, 1); "Справа внизу" = @(1, 1) }
+$cbPlace.Items.AddRange(@($places.Keys))
+$cbPlace.Add_SelectedIndexChanged({ $p = $places[$cbPlace.SelectedItem]; $osd.x = $p[0]; $osd.y = $p[1]; $pan.Invalidate(); Save-Osd })
 
 # настоящий счётчик на рабочем столе: зажать мышь и тянуть; Esc или двойной щелчок - готово
 function Show-OsdPlacer {
@@ -164,13 +176,14 @@ function Show-OsdPlacer {
     $osd.x = [Math]::Min(1, [Math]::Max(0, ($o.Left - $ds.X) / [Math]::Max(1, $ds.Width - $o.Width)))
     $osd.y = [Math]::Min(1, [Math]::Max(0, ($o.Top - $ds.Y) / [Math]::Max(1, $ds.Height - $o.Height)))
     $pan.Invalidate()
-    $status.Text = "Место счётчика выбрано; нажмите «Сохранить»"
+    Save-Osd
+    $status.Text = "Место счётчика сохранено"
 }
 $bPlace = Add-Ctl $g2 (New-Object Windows.Forms.Button) 12 122 138 24
 $bPlace.Text = "Разместить на экране"
 $bPlace.Add_Click({ [void][Windows.Forms.MessageBox]::Show("Счётчик появится на рабочем столе: зажмите его мышью и перетащите. Esc или двойной щелчок - готово.", "FPS"); Show-OsdPlacer })
 
-$status = Add-Ctl $f (New-Object Windows.Forms.Label) 8 324 316 44 0
+$status = Add-Ctl $f (New-Object Windows.Forms.Label) 8 356 316 44 0
 $status.Text = "Игра: $GameDir"
 
 function Save-Osd {
