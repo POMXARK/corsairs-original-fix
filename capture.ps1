@@ -3,6 +3,8 @@ Screenshots, screen recording and an FPS log for the original game, as F8 / F9 a
 Runs next to the game and ends with it (play.cmd starts both):
 
   F8   a screenshot to Documents\My Games\Sea Dogs\Screenshots\<date>.jpg
+  F10  the counter and the graph on/off
+  F11  the periodic statistics lines of fps.log on/off
   F9   a video to Screenshots\<date>.mp4 (ffmpeg, the desktop 30 fps, no sound); F9 again ends it
   FPS  (-ShowFps: the number in the top left corner, as show_fps of the new engine) every 5 s a line of Documents\My Games\Sea Dogs\Logs\fps.log (PresentMon, the frames that DDrawCompat presents)
 
@@ -151,7 +153,8 @@ if (Test-Path $osdFile) {
     }
 }
 
-function Log($text) { Add-Content $FpsLog ("{0:yyyy-MM-dd HH:mm:ss} {1}" -f (Get-Date), $text) -Encoding UTF8 }
+$script:statLog = $true   # F11 stops the periodic statistics lines (osd, fps avg, hook frames); screenshots, videos and errors are still logged
+function Log($text) { if (-not $script:statLog -and $text -match "^(osd:|fps avg|hook: frames)") { return }; Add-Content $FpsLog ("{0:yyyy-MM-dd HH:mm:ss} {1}" -f (Get-Date), $text) -Encoding UTF8 }
 
 # in the game (overlay.bin hooked into ENGINE.exe) when it is there, else in a window on top
 $script:hooked = $false
@@ -330,7 +333,7 @@ function Notify($text, $color, $seconds, $ascii) {
     $toast.Raise()
 }
 if ($ShowFps -and -not $hooked) { $overlay = New-Object FpsOverlay($Osd.x, $Osd.y, [int]$Osd.size); $overlay.Show(); Log "overlay at $($overlay.Left),$($overlay.Top) size $($overlay.Width)x$($overlay.Height) from osd.ini x=$($Osd.x) y=$($Osd.y)" }
-$video = $null; $f8 = $false; $f9 = $false; $f10 = $false; $tick = 0
+$video = $null; $f8 = $false; $f9 = $false; $f10 = $false; $f11 = $false; $tick = 0
 while (-not $game.HasExited) {
     Start-Sleep -Milliseconds 100
     $tick++
@@ -351,7 +354,9 @@ while (-not $game.HasExited) {
     }
     $d10 = $focus -and (([CapNative]::GetAsyncKeyState(0x79) -band 0x8000) -ne 0)
     if ($d10 -and -not $f10) { $fpsShown = -not $fpsShown; Log "fps counter $(if ($fpsShown) { 'on' } else { 'off' })"; if (-not $fpsShown) { Show-Fps "" } }
-    $f8 = $d8; $f9 = $d9; $f10 = $d10
+    $d11 = $focus -and (([CapNative]::GetAsyncKeyState(0x7A) -band 0x8000) -ne 0)
+    if ($d11 -and -not $f11) { $script:statLog = -not $script:statLog; $statLog = $script:statLog; Log "statistics log $(if ($statLog) { 'on' } else { 'off' })"; if (-not $statLog) { Add-Content $FpsLog ("{0:yyyy-MM-dd HH:mm:ss} statistics log off" -f (Get-Date)) -Encoding UTF8 } }
+    $f8 = $d8; $f9 = $d9; $f10 = $d10; $f11 = $d11
     [Windows.Forms.Application]::DoEvents()
     if ($hooked) { if ($toastUntil -ne [datetime]::MinValue -and (Get-Date) -gt $toastUntil) { Poke-Text 0x40 60 ""; $msgText = ""; $toastUntil = [datetime]::MinValue } }
     elseif ($toast.Visible) { if ((Get-Date) -gt $toastUntil) { $toast.Hide() } elseif ($tick % 10 -eq 0) { $toast.Raise() } }
