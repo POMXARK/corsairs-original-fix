@@ -24,7 +24,7 @@ param(
 )
 $ErrorActionPreference = "Stop"
 # fix.ini next to this script (written by the settings window): the switches of the patches, the logs, the screenshots and the video; the command line only adds "off" switches
-$Cfg = @{ keyrepeat = 1; finetick = 0; screenshots = 1; video = 1; fpslog = 1; osd = 1; statlog = 1 }
+$Cfg = @{ keyrepeat = 1; finetick = 0; screenshots = 1; video = 1; fpslog = 1; osd = 1; statlog = 1; frame = 1 }
 $cfgFile = Join-Path $PSScriptRoot "fix.ini"
 if (Test-Path $cfgFile) { foreach ($l in [IO.File]::ReadAllLines($cfgFile)) { if ($l -match "^\s*(\w+)\s*=\s*(\d+)\s*$" -and $Cfg.ContainsKey($Matches[1])) { $Cfg[$Matches[1]] = [int]$Matches[2] } } }
 if (-not $Cfg.keyrepeat) { $NoKeyRepeat = [switch]$true }
@@ -50,6 +50,12 @@ public static class CapNative {
     [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] public static extern IntPtr GetWindowLongPtr(IntPtr h, int index);
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] public static extern IntPtr SetWindowLongPtr(IntPtr h, int index, IntPtr value);
+    [DllImport("user32.dll")] public static extern bool AdjustWindowRectEx(ref RECT r, uint style, bool menu, uint exStyle);
+    [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int hh, uint flags);
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
 }
 "@
 
@@ -195,6 +201,31 @@ function Show-Fps($text) {
     if ($script:hooked) { if ($script:hookLive) { Poke-Text 0x10 48 $text } }
     elseif ($overlay) { $overlay.Text1.Text = $(if ($text) { $text } else { " " }) }
 }
+
+# windowed mode (WINDOW_MODE 1): the game makes a window without a frame at 0,0 (MoveWindow); it gets a title bar and goes to the middle of the working area, then the player moves it as any window
+function Set-Frame {
+    $game.Refresh()
+    $h = $game.MainWindowHandle
+    if ($h -eq [IntPtr]::Zero) { return }
+    $style = [uint64][int64][CapNative]::GetWindowLongPtr($h, -16)
+    $caption = 0x00C00000 -bor 0x00080000 -bor 0x00020000   # WS_CAPTION, WS_SYSMENU, WS_MINIMIZEBOX
+    if (($style -band 0x00C00000) -eq 0x00C00000) { return }   # already framed: where the player put it stays
+    $c = New-Object CapNative+RECT
+    [void][CapNative]::GetClientRect($h, [ref]$c)
+    if ($c.Right -lt 200 -or $c.Bottom -lt 200) { return }
+    $r = New-Object CapNative+RECT; $r.Right = $c.Right; $r.Bottom = $c.Bottom
+    $new = [uint32]($style -bor $caption)
+    [void][CapNative]::SetWindowLongPtr($h, -16, [IntPtr][int64]$new)
+    [void][CapNative]::AdjustWindowRectEx([ref]$r, $new, $false, [uint32][int64][CapNative]::GetWindowLongPtr($h, -20))
+    $w = $r.Right - $r.Left; $ht = $r.Bottom - $r.Top
+    $wa = [Windows.Forms.Screen]::FromHandle($h).WorkingArea
+    $x = $wa.X + [Math]::Max(0, [int](($wa.Width - $w) / 2)); $y = $wa.Y + [Math]::Max(0, [int](($wa.Height - $ht) / 2))
+    [void][CapNative]::SetWindowPos($h, [IntPtr]::Zero, $x, $y, $w, $ht, 0x0004 -bor 0x0020 -bor 0x0010)   # NOZORDER | FRAMECHANGED | NOACTIVATE
+    Log "window frame: client $($c.Right)x$($c.Bottom), window $w x $ht at $x,$y"
+}
+$engineIni = Join-Path $GameDir "engine.ini"
+function Test-Windowed { foreach ($l in [IO.File]::ReadAllLines($engineIni, [Text.Encoding]::GetEncoding(1251))) { if ($l -match "^WINDOW_MODE\s+(\d+)") { return [int]$Matches[1] -eq 1 } }; return $false }
+$windowed = Test-Windowed
 
 function Get-Tool($file, $url, $sha, [scriptblock]$unpack) {
     $path = Join-Path $Tools $file
@@ -378,6 +409,7 @@ while (-not $game.HasExited) {
     if ($d11 -and -not $f11) { $script:statLog = -not $script:statLog; $statLog = $script:statLog; Log "statistics log $(if ($statLog) { 'on' } else { 'off' })"; if (-not $statLog) { Add-Content $FpsLog ("{0:yyyy-MM-dd HH:mm:ss} statistics log off" -f (Get-Date)) -Encoding UTF8 } }
     $f8 = $d8; $f9 = $d9; $f10 = $d10; $f11 = $d11
     [Windows.Forms.Application]::DoEvents()
+    if ($Cfg.frame -and $windowed -and $tick % 10 -eq 5) { try { Set-Frame } catch { Log "window frame failed: $($_.Exception.Message)" } }
     if ($hooked) { if ($toastUntil -ne [datetime]::MinValue -and (Get-Date) -gt $toastUntil) { Poke-Text 0x40 60 ""; $msgText = ""; $toastUntil = [datetime]::MinValue } }
     elseif ($toast.Visible) { if ((Get-Date) -gt $toastUntil) { $toast.Hide() } elseif ($tick % 10 -eq 0) { $toast.Raise() } }
     if ($overlay) { if ($tick % 10 -eq 0) { $overlay.Raise() }; if ($tick % 300 -eq 20) { Log ("overlay: " + $overlay.Where([uint32]$game.Id)) } }

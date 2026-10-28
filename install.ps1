@@ -106,6 +106,7 @@ if (-not $Width -or -not $Height) {
     $v = Get-CimInstance Win32_VideoController | Where-Object { $_.CurrentHorizontalResolution } | Select-Object -First 1
     $Width = if ($v) { [int]$v.CurrentHorizontalResolution } else { 1280 }
     $Height = if ($v) { [int]$v.CurrentVerticalResolution } else { 960 }
+    if ($Windowed) { $Width = 1024; $Height = 768 }   # a window with a title bar has to fit the screen
 }
 Save-Original $ini
 Set-IniKey $ini "BPP" 16   # the game is 16-bit; DDrawCompat.ini (DesktopColorDepth=16) keeps it so on a 32-bit desktop
