@@ -53,7 +53,7 @@ if ((Test-Path $fonts) -and (Test-Path $origFonts)) {
 $f = New-Object Windows.Forms.Form
 $f.Text = "Установки ""Корсаров"""
 $f.AutoScaleMode = "None"
-$f.ClientSize = New-Object Drawing.Size(422, 308)
+$f.ClientSize = New-Object Drawing.Size(422, 372)
 $f.StartPosition = "CenterScreen"
 $f.FormBorderStyle = "FixedDialog"; $f.MaximizeBox = $false; $f.MinimizeBox = $false
 $f.Font = New-Object Drawing.Font("Tahoma", 8.25)
@@ -64,7 +64,7 @@ function Add-Ctl($parent, $ctl, $x, $y, $w, $h) {
 }
 function New-Text($text) { $l = New-Object Windows.Forms.Label; $l.Text = $text; $l.TextAlign = "MiddleLeft"; return $l }
 
-$g = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 4 316 248 0
+$g = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 4 316 160 0
 $g.Text = "Параметры визуализации"
 $null = Add-Ctl $g (New-Text "Разрешение") 12 26 90 22
 $cbRes = Add-Ctl $g (New-Object Windows.Forms.ComboBox) 110 26 190 22
@@ -85,17 +85,64 @@ $auto.Add_CheckedChanged({ $nud.Enabled = -not $auto.Checked })
 $chWasd = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 126 290 22
 $chWasd.Text = "Ходьба в городе на W A S D"; $chWasd.Checked = $curWasd
 
-$chCap = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 150 300 22
+# счётчик FPS: место и размер задаются на миниатюре экрана; fix\osd.ini читает capture.ps1
+$osdPath = Join-Path $Here "osd.ini"
+$osd = @{ x = 0.0; y = 0.0; size = 14 }
+if (Test-Path $osdPath) {
+    foreach ($l in [IO.File]::ReadAllLines($osdPath)) {
+        if ($l -match "^(x|y|size)=([0-9.]+)$") { $osd[$Matches[1]] = [double]::Parse($Matches[2], [Globalization.CultureInfo]::InvariantCulture) }
+    }
+}
+$g2 = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 168 316 150 0
+$g2.Text = "Снимки, запись, счётчик FPS"
+$chCap = Add-Ctl $g2 (New-Object Windows.Forms.CheckBox) 12 20 130 22
 $chCap.Text = "F8 снимок, F9 запись"; $chCap.Checked = $true
-$chLog = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 174 300 22
+$chLog = Add-Ctl $g2 (New-Object Windows.Forms.CheckBox) 12 44 130 22
 $chLog.Text = "Писать FPS в лог"; $chLog.Checked = $true
-$chOsd = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 198 300 22
-$chOsd.Text = "Показывать FPS на экране"; $chOsd.Checked = $true
+$chOsd = Add-Ctl $g2 (New-Object Windows.Forms.CheckBox) 12 68 130 22
+$chOsd.Text = "FPS на экране"; $chOsd.Checked = $true
+$null = Add-Ctl $g2 (New-Text "Размер") 12 98 50 22
+$nudOsd = Add-Ctl $g2 (New-Object Windows.Forms.NumericUpDown) 66 98 60 22
+$nudOsd.Minimum = 8; $nudOsd.Maximum = 96; $nudOsd.Value = [decimal][Math]::Min(96, [Math]::Max(8, $osd.size))
 
-$status = Add-Ctl $f (New-Object Windows.Forms.Label) 8 260 316 44 0
+# миниатюра экрана с той же пропорцией, что у рабочего стола; квадрат - счётчик, щелчок или перетаскивание двигают его
+$ds = [Windows.Forms.Screen]::PrimaryScreen.Bounds
+$pw = 148; $ph = [int][Math]::Round($pw * $ds.Height / $ds.Width)
+$pan = Add-Ctl $g2 (New-Object Windows.Forms.Panel) 158 20 $pw $ph
+$pan.BackColor = [Drawing.Color]::FromArgb(30, 40, 60); $pan.BorderStyle = "FixedSingle"
+$hint = Add-Ctl $g2 (New-Text "Щёлкните на миниатюре, где показывать счётчик") 158 ($ph + 24) 148 40
+$hint.TextAlign = "TopLeft"
+function Get-OsdBox {   # размер счётчика на миниатюре: ширина 5, высота 1.7 кегля на экране
+    $w = [Math]::Max(6, [int]($nudOsd.Value * 5 * $pw / $ds.Width)); $h = [Math]::Max(4, [int]($nudOsd.Value * 1.7 * $ph / $ds.Height))
+    return @($w, $h)
+}
+$pan.Add_Paint({
+    param($s, $e)
+    $b = Get-OsdBox
+    $x = [int]($osd.x * ($pan.ClientSize.Width - $b[0])); $y = [int]($osd.y * ($pan.ClientSize.Height - $b[1]))
+    $e.Graphics.FillRectangle([Drawing.Brushes]::Lime, $x, $y, $b[0], $b[1])
+})
+$moveOsd = {
+    param($s, $e)
+    if ($e.Button -ne "Left") { return }
+    $b = Get-OsdBox
+    $osd.x = [Math]::Min(1, [Math]::Max(0, ($e.X - $b[0] / 2) / [Math]::Max(1, $pan.ClientSize.Width - $b[0])))
+    $osd.y = [Math]::Min(1, [Math]::Max(0, ($e.Y - $b[1] / 2) / [Math]::Max(1, $pan.ClientSize.Height - $b[1])))
+    $pan.Invalidate()
+}
+$pan.Add_MouseDown($moveOsd); $pan.Add_MouseMove($moveOsd)
+$nudOsd.Add_ValueChanged({ $pan.Invalidate() })
+
+$status = Add-Ctl $f (New-Object Windows.Forms.Label) 8 324 316 44 0
 $status.Text = "Игра: $GameDir"
 
+function Save-Osd {
+    $inv = [Globalization.CultureInfo]::InvariantCulture
+    [IO.File]::WriteAllLines($osdPath, @("x=" + ([double]$osd.x).ToString("0.000", $inv), "y=" + ([double]$osd.y).ToString("0.000", $inv), "size=" + [int]$nudOsd.Value))
+}
+
 function Apply-Settings([switch]$Launch) {
+    Save-Osd
     $parts = "$($cbRes.Text)".Trim() -split "[xх×]"
     if ($parts.Count -ne 2 -or -not ($parts[0] -as [int]) -or -not ($parts[1] -as [int])) { $status.Text = "Разрешение вида 1920x1080"; return }
     $psArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $Install, "-GameDir", $GameDir, "-Width", [int]$parts[0], "-Height", [int]$parts[1])

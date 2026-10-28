@@ -43,10 +43,12 @@ using System; using System.Drawing; using System.Windows.Forms;
 // a window on top of the game that the mouse and the keys pass through and that never takes the focus
 public class FpsOverlay : Form {
     public Label Text1 = new Label();
-    public FpsOverlay() {
+    public FpsOverlay(double x, double y, int size) {
         FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; TopMost = true; StartPosition = FormStartPosition.Manual;
-        Location = new Point(8, 8); Size = new Size(150, 30); BackColor = Color.Black; Opacity = 0.65;
-        Text1.ForeColor = Color.Lime; Text1.Font = new Font("Consolas", 14, FontStyle.Bold); Text1.Dock = DockStyle.Fill; Text1.Text = "FPS --";
+        var scr = Screen.PrimaryScreen.Bounds;
+        Size = new Size((int)(size * 5), (int)(size * 1.7)); BackColor = Color.Black; Opacity = 0.65;
+        Location = new Point(scr.X + (int)(x * (scr.Width - Width)), scr.Y + (int)(y * (scr.Height - Height)));
+        Text1.ForeColor = Color.Lime; Text1.Font = new Font("Consolas", size, FontStyle.Bold, GraphicsUnit.Pixel); Text1.TextAlign = ContentAlignment.MiddleCenter; Text1.Dock = DockStyle.Fill; Text1.Text = "FPS --";
         Controls.Add(Text1);
     }
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
@@ -56,6 +58,15 @@ public class FpsOverlay : Form {
     protected override CreateParams CreateParams { get { var p = base.CreateParams; p.ExStyle |= 0x80 | 0x20 | 0x08000000 | 0x80000; return p; } } // toolwindow, transparent to input, no activate, layered
 }
 "@
+
+# fix\osd.ini of the settings window: where the counter stands (0..1 over the free room of the screen) and the size of its letters
+$Osd = @{ x = 0.0; y = 0.0; size = 14 }
+$osdFile = Join-Path $PSScriptRoot "osd.ini"
+if (Test-Path $osdFile) {
+    foreach ($l in [IO.File]::ReadAllLines($osdFile)) {
+        if ($l -match "^(x|y|size)=([0-9.]+)$") { $Osd[$Matches[1]] = [double]::Parse($Matches[2], [Globalization.CultureInfo]::InvariantCulture) }
+    }
+}
 
 function Log($text) { Add-Content $FpsLog ("{0:yyyy-MM-dd HH:mm:ss} {1}" -f (Get-Date), $text) -Encoding UTF8 }
 
@@ -160,7 +171,7 @@ if (-not $NoFps -and ($ShowFps -or -not $NoFpsLog)) {
     try { $fps = Start-Fps $game } catch { Log "fps: PresentMon did not start: $($_.Exception.Message)" }
 }
 $overlay = $null
-if ($ShowFps) { $overlay = New-Object FpsOverlay; $overlay.Show() }
+if ($ShowFps) { $overlay = New-Object FpsOverlay($Osd.x, $Osd.y, [int]$Osd.size); $overlay.Show() }
 $video = $null; $f8 = $false; $f9 = $false; $tick = 0
 while (-not $game.HasExited) {
     Start-Sleep -Milliseconds 100
