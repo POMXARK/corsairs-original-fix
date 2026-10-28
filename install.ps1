@@ -125,7 +125,7 @@ if ($Wasd) { Write-Host "walking: W A S D" }
 $tools = Join-Path $GameDir "fix"
 if ($Here -ne $tools) {
     New-Item $tools -ItemType Directory -Force | Out-Null
-    foreach ($n in "install.ps1", "settings.ps1", "settings.cmd", "capture.ps1", "play.cmd", "DDrawCompat.ini") { Copy-Item (Join-Path $Here $n) $tools -Force }
+    foreach ($n in "install.ps1", "settings.ps1", "settings.cmd", "capture.ps1", "overlay.bin", "play.cmd", "DDrawCompat.ini") { Copy-Item (Join-Path $Here $n) $tools -Force }
 }
 $lnk = Join-Path ([Environment]::GetFolderPath("CommonDesktopDirectory")) "Корсары - настройки.lnk"
 $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
