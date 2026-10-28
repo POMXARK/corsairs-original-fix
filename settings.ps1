@@ -73,7 +73,7 @@ $cbRes.Text = if ($curW -and $curH) { "${curW}x$curH" } else { $desktop }
 
 # fix.ini: настройки наших патчей, их читают profile.ps1 (задержка, лимит FPS) и capture.ps1 (хук, логи, снимки, видео)
 $cfgPath = Join-Path $Here "fix.ini"
-$cfg = [ordered]@{ lowlag = 1; fpslimit = 0; keyrepeat = 1; finetick = 0; screenshots = 1; video = 1; fpslog = 1; osd = 1; statlog = 1; frame = 3; skipintro = 1; fontauto = 1 }
+$cfg = [ordered]@{ lowlag = 1; fpslimit = 0; keyrepeat = 1; finetick = 0; screenshots = 1; video = 1; audio = 1; fpslog = 1; osd = 1; statlog = 1; frame = 3; skipintro = 1; fontauto = 1 }
 if (Test-Path $cfgPath) { foreach ($l in [IO.File]::ReadAllLines($cfgPath)) { if ($l -match "^\s*(\w+)\s*=\s*(\d+)\s*$" -and $cfg.Contains($Matches[1])) { $cfg[$Matches[1]] = [int]$Matches[2] } } }
 
 $chFull = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 62 140 20
@@ -203,6 +203,10 @@ $chKeys = Add-Check "Повтор зажатых клавиш (без паузы
 $chFine = Add-Check "Точный таймер кадра (экспериментально)" 68 $cfg.finetick "Время кадра по TSC вместо GetTickCount (шаг 15,6 мс). На этой игре давало инерцию после отпускания клавиши: по умолчанию выкл. (docs/frame-time.md)."
 $chShot = Add-Check "F8: снимок экрана" 92 $cfg.screenshots "Скриншот в Документы\My Games\Sea Dogs\Screenshots"
 $chVid = Add-Check "F9: запись видео" 116 $cfg.video "ffmpeg пишет рабочий стол в Screenshots; F9 ещё раз - стоп."
+$chVid.Width = 150
+$chAud = Add-Ctl $g3 (New-Object Windows.Forms.CheckBox) 166 116 140 22
+$chAud.Text = "со звуком"; $chAud.Checked = [bool]$cfg.audio; $tip1.SetToolTip($chAud, "К видео добавляется звук колонок (то, что играет на выходе по умолчанию, включая другие программы). Если выключено, видео без звука.")
+$chVid.Add_CheckedChanged({ $chAud.Enabled = $chVid.Checked }); $chAud.Enabled = $chVid.Checked
 $chLog = Add-Check "Писать FPS в лог (fps.log)" 140 $cfg.fpslog "Строка статистики раз в 5 секунд в Документы\My Games\Sea Dogs\Logs\fps.log"
 $chStat = Add-Check "Строки статистики в логе (F11)" 164 $cfg.statlog "Если выкл., в логе остаются только события: снимки, видео, ошибки."
 $chSkip = Add-Check "Пропускать заставки (Esc сам)" 188 $cfg.skipintro "Ролики logo1/logo2 пропускаются сразу после запуска (Esc посылается игре). Вручную: Esc во время ролика или Shift при запуске."
@@ -224,7 +228,7 @@ function Save-Osd {
 function Save-Cfg {
     $lim = [regex]::Match("$($cbFps.Text)", "\d+").Value
     $cfg.lowlag = [int]$chLow.Checked; $cfg.keyrepeat = [int]$chKeys.Checked; $cfg.finetick = [int]$chFine.Checked
-    $cfg.screenshots = [int]$chShot.Checked; $cfg.video = [int]$chVid.Checked; $cfg.fpslog = [int]$chLog.Checked; $cfg.statlog = [int]$chStat.Checked
+    $cfg.screenshots = [int]$chShot.Checked; $cfg.video = [int]$chVid.Checked; $cfg.audio = [int]$chAud.Checked; $cfg.fpslog = [int]$chLog.Checked; $cfg.statlog = [int]$chStat.Checked
     $cfg.osd = [int]$chOsd.Checked; $cfg.fontauto = [int]$auto.Checked; $cfg.frame = $frameVals[[Math]::Max(0, $cbFrame.SelectedIndex)]; $cfg.skipintro = [int]$chSkip.Checked; $cfg.fpslimit = $(if ($lim) { [Math]::Min(1000, [int]$lim) } else { 0 })
     [IO.File]::WriteAllLines($cfgPath, @($cfg.Keys | ForEach-Object { "$_=$($cfg[$_])" }))
 }

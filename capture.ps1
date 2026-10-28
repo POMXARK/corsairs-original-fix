@@ -5,7 +5,7 @@ Runs next to the game and ends with it (play.cmd starts both):
   F8   a screenshot to Documents\My Games\Sea Dogs\Screenshots\<date>.jpg
   F10  the counter and the graph on/off
   F11  the periodic statistics lines of fps.log on/off
-  F9   a video to Screenshots\<date>.mp4 (ffmpeg, the desktop 30 fps, no sound); F9 again ends it
+  F9   a video to Screenshots\<date>.mp4 (ffmpeg, the desktop 30 fps, with the sound of the speakers when audio=1); F9 again ends it
   FPS  (-ShowFps: the number in the top left corner, as show_fps of the new engine) every 5 s a line of Documents\My Games\Sea Dogs\Logs\fps.log (PresentMon, the frames that DDrawCompat presents)
 
 PresentMon (MIT) and ffmpeg (GPL, a build of gyan.dev) are downloaded once to <game>\fix\tools, the versions and
@@ -24,7 +24,7 @@ param(
 )
 $ErrorActionPreference = "Stop"
 # fix.ini next to this script (written by the settings window): the switches of the patches, the logs, the screenshots and the video; the command line only adds "off" switches
-$Cfg = @{ keyrepeat = 1; finetick = 0; screenshots = 1; video = 1; fpslog = 1; osd = 1; statlog = 1; frame = 3; skipintro = 1; fpslimit = 0; autotest = 0; testx = 0; testy = 0 }
+$Cfg = @{ keyrepeat = 1; finetick = 0; screenshots = 1; video = 1; audio = 1; fpslog = 1; osd = 1; statlog = 1; frame = 3; skipintro = 1; fpslimit = 0; autotest = 0; testx = 0; testy = 0 }
 $cfgFile = Join-Path $PSScriptRoot "fix.ini"
 if (Test-Path $cfgFile) { foreach ($l in [IO.File]::ReadAllLines($cfgFile)) { if ($l -match "^\s*(\w+)\s*=\s*(\d+)\s*$" -and $Cfg.ContainsKey($Matches[1])) { $Cfg[$Matches[1]] = [int]$Matches[2] } } }
 if (-not $Cfg.keyrepeat) { $NoKeyRepeat = [switch]$true }
@@ -530,17 +530,94 @@ function Save-Screenshot($name) {
     $g.Dispose(); $bmp.Dispose()
 }
 
+# the sound of the video: WASAPI loopback of the default output (what the speakers play) into a raw file, ffmpeg joins it with the picture when F9 ends the record
+# (ffmpeg here has no WASAPI input, the PC has no "stereo mix"). Silence is written for the gaps: loopback gives no packets while nothing plays
+Add-Type -TypeDefinition @"
+using System; using System.IO; using System.Runtime.InteropServices; using System.Threading; using System.Diagnostics;
+public class AudioLoop {
+    [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumeratorCom { }
+    [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IMMDeviceEnumerator { int EnumAudioEndpoints(int flow, int mask, out IntPtr devs); int GetDefaultAudioEndpoint(int flow, int role, out IMMDevice dev); }
+    [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IMMDevice { int Activate(ref Guid iid, int ctx, IntPtr p, [MarshalAs(UnmanagedType.IUnknown)] out object o); }
+    [ComImport, Guid("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IAudioClient {
+        int Initialize(int mode, int flags, long dur, long per, IntPtr fmt, IntPtr guid);
+        int GetBufferSize(out uint n); int GetStreamLatency(out long l); int GetCurrentPadding(out uint n);
+        int IsFormatSupported(int mode, IntPtr fmt, out IntPtr close); int GetMixFormat(out IntPtr fmt);
+        int GetDevicePeriod(out long def, out long min); int Start(); int Stop(); int Reset(); int SetEventHandle(IntPtr h);
+        int GetService(ref Guid iid, [MarshalAs(UnmanagedType.IUnknown)] out object o);
+    }
+    [ComImport, Guid("C8ADBD64-E71E-48a0-A4DE-185C395CD317"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IAudioCapture { int GetBuffer(out IntPtr data, out uint frames, out uint flags, out ulong pos, out ulong qpc); int ReleaseBuffer(uint frames); int GetNextPacketSize(out uint n); }
+    public int Rate, Channels, Bits; public bool Float; public string Error; public long Frames;
+    Thread th; volatile bool stop; string path;
+    public bool Start(string file) {
+        path = file;
+        try {
+            IMMDevice dev; ((IMMDeviceEnumerator)new MMDeviceEnumeratorCom()).GetDefaultAudioEndpoint(0, 0, out dev);
+            Guid ia = new Guid("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2"); object o; dev.Activate(ref ia, 23, IntPtr.Zero, out o);
+            IAudioClient ac = (IAudioClient)o; IntPtr fmt; ac.GetMixFormat(out fmt);
+            int tag = Marshal.ReadInt16(fmt, 0); Channels = Marshal.ReadInt16(fmt, 2); Rate = Marshal.ReadInt32(fmt, 4); Bits = Marshal.ReadInt16(fmt, 14);
+            Float = tag == 3 || (tag == unchecked((short)0xFFFE) && Marshal.ReadInt16(fmt, 24) == 3);
+            int hr = ac.Initialize(0, 0x00020000, 10000000, 0, fmt, IntPtr.Zero); if (hr != 0) { Error = "Initialize 0x" + hr.ToString("X"); return false; }
+            Guid ic = new Guid("C8ADBD64-E71E-48a0-A4DE-185C395CD317"); ac.GetService(ref ic, out o); IAudioCapture cap = (IAudioCapture)o;
+            hr = ac.Start(); if (hr != 0) { Error = "Start 0x" + hr.ToString("X"); return false; }
+            th = new Thread(delegate() { Run(ac, cap); }); th.IsBackground = true; th.Start(); return true;
+        } catch (Exception e) { Error = e.Message; return false; }
+    }
+    void Run(IAudioClient ac, IAudioCapture cap) {
+        int fs = Channels * Bits / 8; byte[] zero = new byte[fs * 4800]; Stopwatch sw = Stopwatch.StartNew();
+        using (FileStream f = new FileStream(path, FileMode.Create)) {
+            while (!stop) {
+                Thread.Sleep(10); uint n; cap.GetNextPacketSize(out n);
+                while (n > 0) {
+                    IntPtr d; uint fr, fl; ulong pos, qpc; cap.GetBuffer(out d, out fr, out fl, out pos, out qpc);
+                    byte[] b = new byte[fr * fs]; if ((fl & 2) == 0) Marshal.Copy(d, b, 0, b.Length);
+                    f.Write(b, 0, b.Length); Frames += fr; cap.ReleaseBuffer(fr); cap.GetNextPacketSize(out n);
+                }
+                long want = sw.ElapsedMilliseconds * Rate / 1000; long gap = want - Frames;
+                while (gap > Rate / 50) { int k = (int)Math.Min(gap, 4800); f.Write(zero, 0, k * fs); Frames += k; gap -= k; }
+            }
+        }
+        ac.Stop();
+    }
+    public void Stop() { stop = true; if (th != null) th.Join(3000); }
+    public string Pcm() { return (Float ? "f" : "s") + Bits + "le"; }
+}
+"@
 function Start-Video($name) {
+    $withSound = [bool]$Cfg.audio
+    $out = if ($withSound) { "$name.video.mp4" } else { $name }
     $psi = New-Object Diagnostics.ProcessStartInfo (Get-Ffmpeg)
-    $psi.Arguments = "-y -f gdigrab -framerate 30 -draw_mouse 0 -i desktop -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p `"$name`""
+    $psi.Arguments = "-y -f gdigrab -framerate 30 -draw_mouse 0 -i desktop -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p `"$out`""
     $psi.RedirectStandardInput = $true; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
-    return [Diagnostics.Process]::Start($psi)
+    $p = [Diagnostics.Process]::Start($psi)
+    $script:vidName = $name; $script:vidAudio = $null; $script:vidRaw = $null
+    if ($withSound) {
+        for ($i = 0; $i -lt 30 -and -not (Test-Path $out); $i++) { Start-Sleep -Milliseconds 100 }   # the sound starts when ffmpeg has opened the file: the two begin together
+        $script:vidRaw = "$name.raw"; $al = New-Object AudioLoop
+        if ($al.Start($script:vidRaw)) { $script:vidAudio = $al; Log "audio loopback: $($al.Rate) Hz, $($al.Channels) ch, $($al.Pcm())" } else { Log "audio loopback failed: $($al.Error): the video has no sound" }
+    }
+    return $p
 }
 
 function Stop-Video($proc) {
     if (-not $proc -or $proc.HasExited) { return }
+    $al = $script:vidAudio; if ($al) { $al.Stop() }
     $proc.StandardInput.WriteLine("q"); $proc.StandardInput.Flush()   # ffmpeg ends the file by itself on q
     if (-not $proc.WaitForExit(15000)) { $proc.Kill() }
+    if ($script:vidRaw) {
+        $name = $script:vidName; $v = "$name.video.mp4"
+        if ($al) {
+            $psi = New-Object Diagnostics.ProcessStartInfo (Get-Ffmpeg); $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+            $psi.Arguments = "-y -i `"$v`" -f $($al.Pcm()) -ar $($al.Rate) -ac $($al.Channels) -i `"$($script:vidRaw)`" -c:v copy -c:a aac -b:a 160k -shortest `"$name`""
+            $m = [Diagnostics.Process]::Start($psi); if (-not $m.WaitForExit(60000)) { $m.Kill() }
+            Log "audio joined, ffmpeg exit $($m.ExitCode)"
+        }
+        if (Test-Path $name) { Remove-Item $v, $script:vidRaw -Force -ErrorAction SilentlyContinue } elseif (Test-Path $v) { Move-Item $v $name -Force }   # a failed join leaves the silent video
+        $script:vidRaw = $null; $script:vidAudio = $null
+    }
 }
 
 Add-Type @"
@@ -658,6 +735,8 @@ function Auto-Step {
     elseif ($script:autoStep -eq 1 -and $t -gt 7) { [Windows.Forms.Cursor]::Position = New-Object Drawing.Point(($r.Left + 400), ($r.Top + 140)); $script:autoStep = 2 }
     elseif ($script:autoStep -eq 2 -and $t -gt 8) { $script:h2 = Snap "2_button1"; [Windows.Forms.Cursor]::Position = New-Object Drawing.Point(($r.Left + 400), ($r.Top + 450)); $script:autoStep = 3 }
     elseif ($script:autoStep -eq 3 -and $t -gt 9) { $script:h3 = Snap "3_button2"; Log "autotest: window $($r.Left),$($r.Top) hashes $($script:h1) $($script:h2) $($script:h3) -> $(if ($script:h1 -ne $script:h2 -or $script:h2 -ne $script:h3) { 'screen changes' } else { 'SCREEN STATIC' })"; [Windows.Forms.Cursor]::Position = New-Object Drawing.Point(($r.Left + 8), ($r.Top + 300)); $script:autoStep = 4 }
+    elseif ($script:autoStep -eq 4 -and $t -gt 10 -and $Cfg.autotest -eq 5) { $script:vf = Join-Path $Shots "autotest-video.mp4"; $script:vp = Start-Video $script:vf; Log "autotest video: started"; $script:autoStep = 15; $script:dragAt = $t }
+    elseif ($script:autoStep -eq 15 -and $t -gt $script:dragAt + 6) { Stop-Video $script:vp; $fi = Get-Item $script:vf -ErrorAction SilentlyContinue; $vd = (cmd /c "`"$(Get-Ffmpeg)`" -hide_banner -i `"$($script:vf)`" -af volumedetect -f null - 2>&1" | Out-String); $mv = [regex]::Match($vd, "mean_volume: ([-\d.]+) dB").Groups[1].Value; $st = [regex]::Matches($vd, "Stream #[^\r\n]*") | % { $_.Value }; Log "autotest video: $($fi.Length) bytes, mean volume $mv dB, streams: $($st -join ' | ')"; $script:autoStep = 16; Stop-Process -Id $game.Id -Force }
     elseif ($script:autoStep -eq 4 -and $t -gt 10 -and $Cfg.autotest -eq 4) { $script:k0 = Snap "4_menu" $r; $cl = New-Object CapNative+RECT; [void][CapNative]::GetClipCursor([ref]$cl); [Windows.Forms.Cursor]::Position = New-Object Drawing.Point(50, 50); Start-Sleep -Milliseconds 400; $c = [Windows.Forms.Cursor]::Position; Log "autotest free: clip $($cl.Left),$($cl.Top)-$($cl.Right),$($cl.Bottom), cursor set 50,50 -> $($c.X),$($c.Y), window $($r.Left),$($r.Top) -> $(if ($c.X -eq 50) { 'CURSOR FREE' } else { 'CURSOR CLIPPED' })"; $script:k1 = Snap "5_far" $r; $script:autoStep = 14; Stop-Process -Id $game.Id -Force }
     elseif ($script:autoStep -eq 4 -and $t -gt 10 -and $Cfg.autotest -eq 3) { $script:k0 = Snap "4_menu" $r; $script:dx0 = $r.Left; $script:dy0 = $r.Top; $oy = [GameHook]::PeekAbs(0x7E0000CC); [Windows.Forms.Cursor]::Position = New-Object Drawing.Point(($r.Left + 400), ($oy - 13)); Start-Sleep -Milliseconds 300; [CapNative]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero); Log "autotest drag: down at $($r.Left + 400),$($oy - 13), window $($r.Left),$($r.Top)"; $script:autoStep = 10; $script:dragAt = $t }
     elseif ($script:autoStep -ge 10 -and $script:autoStep -le 12 -and $t -gt $script:dragAt + 0.4) { $m = $script:autoStep - 9; $c = [Windows.Forms.Cursor]::Position; [Windows.Forms.Cursor]::Position = New-Object Drawing.Point(($script:dx0 + 400 + 120 * $m), ($c.Y + 0 + $(if ($m -eq 1) { 0 } else { 0 }) + 50)); $script:dragAt = $t; $script:autoStep++; Log "autotest drag: move $m to $([Windows.Forms.Cursor]::Position.X),$([Windows.Forms.Cursor]::Position.Y)" }
