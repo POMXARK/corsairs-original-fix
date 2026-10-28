@@ -12,6 +12,7 @@
  *   +0x94 TSC of the last frame, +0x98 TSC and +0x9C tick at the start of the calibration
  *   +0x400.. char fmt[4][32] at +0x400, +0x420, +0x440, +0x460 (framerate, frametime, 1% low, 0.1% low) and +0x480 (the scale, ms): formats of the text function, written by capture.ps1
  *   +0x100 unsigned short ring[256]: the frame times in tenths of a millisecond
+ *   +0xB0 the real GetTickCount, +0xB4 ms of fast_tick(), +0xB8 TSC of that ms, +0xBC 1 = fast_tick is ready (capture.ps1 then points the IAT slot 0x431050 at it), +0xC0 ms of the last sync
  *   +0xA0 key repeat on (0/1, capture.ps1 writes 1 while the game is the window in front); +0x500 unsigned hold[256]: GetTickCount of the key press (0 = up)
  * Build: ./build_overlay.sh  ->  overlay.bin (the code, loaded at 0x7E001000).
  */
@@ -30,6 +31,21 @@ typedef unsigned (__attribute__((thiscall)) *QueueFn)(void *q, unsigned msg, uns
 #define REPEAT_AFTER 150         /* ms of a held key before the first repeat that we send (Windows: 250..1000) */
 #define REPEAT_EVERY 30          /* ms between our repeats */
 #define GRAPH_H 100              /* the height of the graph, its scale follows the worst frame */
+
+/* FUN_00426370 of ENGINE.exe takes the time of the frame from GetTickCount, whose step is 15.6 ms on Windows: at 100+ fps the frames get 0, 0, 16, 0, 16 ms and the
+ * movement is jerky. This is the replacement of that import: the same milliseconds, counted by the TSC (the cycles per ms are measured by the hook), every second pulled back to the real tick. */
+__attribute__((stdcall)) unsigned fast_tick(void)
+{
+    unsigned now = __builtin_ia32_rdtsc();
+    unsigned cpm = (unsigned)DATA[0x8C / 4];
+    int dt = (int)(now - (unsigned)DATA[0xB8 / 4]);
+    if (cpm >= 10 && dt >= (int)cpm) {
+        unsigned d = (unsigned)dt / cpm;
+        DATA[0xB4 / 4] = (int)((unsigned)DATA[0xB4 / 4] + d);
+        DATA[0xB8 / 4] = (int)((unsigned)DATA[0xB8 / 4] + d * cpm);
+    }
+    return (unsigned)DATA[0xB4 / 4];
+}
 
 static void fill(unsigned short *base, int pitch, int sw, int sh, int x, int y, int w, int h, unsigned short c)
 {
@@ -50,7 +66,7 @@ static unsigned short rgb(int f565, int r, int g, int b)
     return (unsigned short)(((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3));
 }
 
-__attribute__((fastcall)) void hook(void *dev)
+__attribute__((fastcall, aligned(256))) void hook(void *dev)   /* at +0x100 of the code: fast_tick is at +0, the call site points at +0x100 */
 {
     volatile unsigned text_addr = 0x40E860;   /* FUN_0040e860(font, x, y, format, ...): the debug text of the engine */
     volatile unsigned flip_addr = 0x40A2A0;   /* FUN_0040a2a0: the end of the frame, the flip */
@@ -126,6 +142,22 @@ __attribute__((fastcall)) void hook(void *dev)
                 ((UnlockFn)unlock_addr)(dev);
             }
             py = 0; (void)py;
+        }
+    }
+    if (cpm >= 10) {   /* the fine tick: start it, then every second compare it with the real one */
+        TickFn real = (TickFn)(unsigned)DATA[0xB0 / 4];
+        if (!DATA[0xBC / 4]) {
+            real = *(TickFn *)tick_iat;
+            DATA[0xB0 / 4] = (int)(unsigned)real;
+            DATA[0xB4 / 4] = (int)real();
+            DATA[0xB8 / 4] = (int)now;
+            DATA[0xC0 / 4] = DATA[0xB4 / 4];
+            DATA[0xBC / 4] = 1;
+        } else if ((unsigned)DATA[0xB4 / 4] - (unsigned)DATA[0xC0 / 4] >= 1000) {
+            int diff = (int)((unsigned)DATA[0xB4 / 4] - real());   /* the real tick is up to 16 ms behind the true time */
+            DATA[0xC0 / 4] = DATA[0xB4 / 4];
+            if (diff < 0) { DATA[0xB4 / 4] = (int)real(); DATA[0xB8 / 4] = (int)now; }
+            else if (diff > 20) DATA[0xB8 / 4] = (int)((unsigned)DATA[0xB8 / 4] + (unsigned)(diff - 8) * cpm);
         }
     }
     if (DATA[0xA0 / 4]) {   /* the game reads the keys from WM_KEYDOWN only (the typematic of Windows: a pause, and only the last key repeats): a key that is held is queued again, as the window procedure 0x417c80 does */

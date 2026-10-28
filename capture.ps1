@@ -18,6 +18,7 @@ param(
     [switch]$NoFpsLog,  # no fps.log lines (the screenshot and video lines stay)
     [switch]$ShowFps,   # the number in the corner of the screen
     [int]$HookMode = 2,   # 2 = the hook; 1 = only the memory and the code, 3 = the hook without stopping the threads (tests)
+    [switch]$NoFineTick,    # the frame time stays in steps of 15.6 ms of GetTickCount (docs/frame-time.md)
     [switch]$NoKeyRepeat,   # no repeats of the held keys from the hook (docs/input-latency.md)
     [switch]$NoHook     # no overlay.bin in the game: the counter and the messages are windows on top (they are seen for a frame only)
 )
@@ -64,7 +65,7 @@ public static class GameHook {
         if (proc == IntPtr.Zero) return "OpenProcess failed: " + Marshal.GetLastWin32Error();
         byte[] site = new byte[5]; int n;
         if (!ReadProcessMemory(proc, (IntPtr)Site, site, 5, out n) || site[0] != 0xE8) return "ENGINE.exe is not the expected one at the flip";
-        int want = Code - (Site + 5);
+        int want = Code + 0x100 - (Site + 5);   // hook() is at +0x100 of the code, fast_tick() at +0
         int now = BitConverter.ToInt32(site, 1);
         if (now == want) return "";   // already hooked
         if (now != unchecked((int)0xFFFE9691)) return "ENGINE.exe is not the expected one at the flip";
@@ -83,6 +84,15 @@ public static class GameHook {
             if (!ok) return "the call is not patched";
         } finally { foreach (IntPtr h in threads) { ResumeThread(h); CloseHandle(h); } }
         return "";
+    }
+    // the import GetTickCount of ENGINE.exe (0x431050, read-only page) -> fast_tick(): the time of the frame in milliseconds, not in steps of 15.6 ms
+    public static bool FineTick() {
+        const int Iat = 0x431050; uint old; int n;
+        if (proc == IntPtr.Zero) return false;
+        VirtualProtectEx(proc, (IntPtr)Iat, (UIntPtr)4, 0x04, out old);
+        bool ok = WriteProcessMemory(proc, (IntPtr)Iat, BitConverter.GetBytes(Code), 4, out n);
+        VirtualProtectEx(proc, (IntPtr)Iat, (UIntPtr)4, old, out old);
+        return ok;
     }
     public static int Peek(int offset) { byte[] b = new byte[4]; int n; if (proc == IntPtr.Zero || !ReadProcessMemory(proc, (IntPtr)(Data + offset), b, 4, out n)) return -1; return BitConverter.ToInt32(b, 0); }
     public static bool Poke(int offset, byte[] data) { int n; return proc != IntPtr.Zero && WriteProcessMemory(proc, (IntPtr)(Data + offset), data, data.Length, out n); }
@@ -334,7 +344,7 @@ function Notify($text, $color, $seconds, $ascii) {
     $toast.Raise()
 }
 if ($ShowFps -and -not $hooked) { $overlay = New-Object FpsOverlay($Osd.x, $Osd.y, [int]$Osd.size); $overlay.Show(); Log "overlay at $($overlay.Left),$($overlay.Top) size $($overlay.Width)x$($overlay.Height) from osd.ini x=$($Osd.x) y=$($Osd.y)" }
-$video = $null; $f8 = $false; $f9 = $false; $f10 = $false; $f11 = $false; $tick = 0
+$fineDone = $false; $video = $null; $f8 = $false; $f9 = $false; $f10 = $false; $f11 = $false; $tick = 0
 while (-not $game.HasExited) {
     Start-Sleep -Milliseconds 100
     $tick++
@@ -362,6 +372,9 @@ while (-not $game.HasExited) {
     if ($hooked) { if ($toastUntil -ne [datetime]::MinValue -and (Get-Date) -gt $toastUntil) { Poke-Text 0x40 60 ""; $msgText = ""; $toastUntil = [datetime]::MinValue } }
     elseif ($toast.Visible) { if ((Get-Date) -gt $toastUntil) { $toast.Hide() } elseif ($tick % 10 -eq 0) { $toast.Raise() } }
     if ($overlay) { if ($tick % 10 -eq 0) { $overlay.Raise() }; if ($tick % 300 -eq 20) { Log ("overlay: " + $overlay.Where([uint32]$game.Id)) } }
+    if ($hooked -and $hookLive -and -not $fineDone -and -not $NoFineTick -and [GameHook]::Peek(0xBC) -eq 1) {
+        $fineDone = $true; Log ("fine tick: " + $(if ([GameHook]::FineTick()) { "on" } else { "not set" }))
+    }
     if ($hooked -and $hookLive -and $tick % 5 -eq 0) {   # something in the game zeroes the page now and then: the strings are written again
         [void][GameHook]::Poke(0, [BitConverter]::GetBytes([int]$fpsPos[0]) + [BitConverter]::GetBytes([int]$fpsPos[1]) + [BitConverter]::GetBytes([int]$msgPos[0]) + [BitConverter]::GetBytes([int]$msgPos[1]))
         Poke-Text 0x10 48 $fpsText
