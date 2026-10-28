@@ -53,7 +53,7 @@ if ((Test-Path $fonts) -and (Test-Path $origFonts)) {
 $f = New-Object Windows.Forms.Form
 $f.Text = "Установки ""Корсаров"""
 $f.AutoScaleMode = "None"
-$f.ClientSize = New-Object Drawing.Size(422, 236)
+$f.ClientSize = New-Object Drawing.Size(422, 260)
 $f.StartPosition = "CenterScreen"
 $f.FormBorderStyle = "FixedDialog"; $f.MaximizeBox = $false; $f.MinimizeBox = $false
 $f.Font = New-Object Drawing.Font("Tahoma", 8.25)
@@ -64,7 +64,7 @@ function Add-Ctl($parent, $ctl, $x, $y, $w, $h) {
 }
 function New-Text($text) { $l = New-Object Windows.Forms.Label; $l.Text = $text; $l.TextAlign = "MiddleLeft"; return $l }
 
-$g = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 4 316 176 0
+$g = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 4 316 200 0
 $g.Text = "Параметры визуализации"
 $null = Add-Ctl $g (New-Text "Разрешение") 12 26 90 22
 $cbRes = Add-Ctl $g (New-Object Windows.Forms.ComboBox) 110 26 190 22
@@ -82,10 +82,13 @@ $auto = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 184 96 116 22
 $auto.Text = "по экрану"
 $auto.Add_CheckedChanged({ $nud.Enabled = -not $auto.Checked })
 
-$chWasd = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 130 290 22
+$chWasd = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 126 290 22
 $chWasd.Text = "Ходьба в городе на W A S D"; $chWasd.Checked = $curWasd
 
-$status = Add-Ctl $f (New-Object Windows.Forms.Label) 8 188 316 44 0
+$chCap = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 150 300 22
+$chCap.Text = "F8 снимок, F9 запись, FPS в лог"; $chCap.Checked = $true
+
+$status = Add-Ctl $f (New-Object Windows.Forms.Label) 8 212 316 44 0
 $status.Text = "Игра: $GameDir"
 
 function Apply-Settings([switch]$Launch) {
@@ -99,7 +102,10 @@ function Apply-Settings([switch]$Launch) {
     $out = & powershell @psArgs 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0 -and $out -match "(?i)error|ошибк|exception") { $status.Text = "Ошибка: " + $out.Trim().Split("`n")[-1]; return $false }
     $status.Text = "Сохранено: $($cbRes.Text), шрифт ×$(if ($auto.Checked) { 'авто' } else { $nud.Value })"
-    if ($Launch) { Start-Process (Join-Path $GameDir "ENGINE.exe") -WorkingDirectory $GameDir }
+    if ($Launch) {
+        if ($chCap.Checked) { Start-Process powershell -WindowStyle Hidden -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $Here "capture.ps1"), "-GameDir", "`"$GameDir`"" }
+        Start-Process (Join-Path $GameDir "ENGINE.exe") -WorkingDirectory $GameDir
+    }
 }
 
 $b1 = Add-Ctl $f (New-Object Windows.Forms.Button) 334 12 80 26; $b1.Text = "Сохранить"
