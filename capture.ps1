@@ -388,13 +388,28 @@ function Set-Frame {
             $rc = New-Object CapNative+RECT; $rc.Right = $w; $rc.Bottom = $ht
             $ns = ([int64][CapNative]::GetWindowLongPtr($h, -16) -band 0x7FFFFFFF) -bor 0xCA0000   # no WS_POPUP; WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
             [void][CapNative]::AdjustWindowRectEx([ref]$rc, [uint32]$ns, $false, [uint32][int64][CapNative]::GetWindowLongPtr($h, -20))
-            $ints = @((0 - $rc.Left), (0 - $rc.Top), (($rc.Right - $rc.Left) - $w), (($rc.Bottom - $rc.Top) - $ht))
+            $script:ints = $null; $ints = @((0 - $rc.Left), (0 - $rc.Top), (($rc.Right - $rc.Left) - $w), (($rc.Bottom - $rc.Top) - $ht))
+            $script:ints = $ints
             [void][GameHook]::Poke(0x900, ($ints | % { [BitConverter]::GetBytes([int]$_) } | % { $_ }))
             [void][CapNative]::SetWindowLongPtr($h, -16, [IntPtr]$ns)
             $wa = [Windows.Forms.Screen]::FromHandle($h).WorkingArea
             Set-Pos ($wa.X + [Math]::Max(0, [int](($wa.Width - $w) / 2))) ($wa.Y + [Math]::Max($ints[1], [int](($wa.Height - $ht) / 2)))
+            $script:placedAt = Get-Date
             Log "real frame: style $($ns.ToString('X')), client in outer $($ints[0]),$($ints[1]), extra $($ints[2])x$($ints[3]), game $w x $ht"
             return
+        }
+        if (-not $script:measured -and ((Get-Date) - $script:placedAt).TotalSeconds -gt 2) {   # the borders AdjustWindowRectEx promised against the real ones: the client area must be exactly the picture
+            $script:measured = $true
+            $p0 = New-Object CapNative+PT; [void][CapNative]::ClientToScreen($h, [ref]$p0); $cr = New-Object CapNative+RECT; [void][CapNative]::GetClientRect($h, [ref]$cr)
+            $want = [GameHook]::PeekAbs(0x7C54FC); $wanth = [GameHook]::PeekAbs(0x7C5500)
+            $m = @(($p0.X - $r.Left), ($p0.Y - $r.Top), (($r.Right - $r.Left) - $want), (($r.Bottom - $r.Top) - $wanth))
+            Log "measured: client origin in outer $($m[0]),$($m[1]) (set $($script:ints -join ',')), client $($cr.Right)x$($cr.Bottom), outer $($r.Right - $r.Left)x$($r.Bottom - $r.Top), picture ${want}x$wanth"
+            $nw = ($r.Right - $r.Left) - $cr.Right + 0; $nh = ($r.Bottom - $r.Top) - $cr.Bottom
+            if ($cr.Right -ne $want -or $cr.Bottom -ne $wanth) {
+                [void][GameHook]::Poke(0x900, (@($m[0], $m[1], $nw, $nh) | % { [BitConverter]::GetBytes([int]$_) } | % { $_ }))
+                Set-Pos $p0.X $p0.Y
+                Log "frame corrected: client in outer $($m[0]),$($m[1]), extra ${nw}x$nh"
+            }
         }
         $pt = New-Object CapNative+PT; [void][CapNative]::ClientToScreen($h, [ref]$pt)   # the client origin follows the window when it is dragged by the caption
         if ($pt.X -ne $script:lastCx -or $pt.Y -ne $script:lastCy) { $script:lastCx = $pt.X; $script:lastCy = $pt.Y; [void][GameHook]::Poke(0xC8, [BitConverter]::GetBytes([int]$pt.X) + [BitConverter]::GetBytes([int]$pt.Y)) }

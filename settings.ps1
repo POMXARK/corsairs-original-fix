@@ -83,7 +83,7 @@ $frameVals = @(0, 1, 3)
 $cbFrame = Add-Ctl $g (New-Object Windows.Forms.ComboBox) 116 60 190 22
 $cbFrame.DropDownStyle = "DropDownList"; $cbFrame.Items.AddRange($frameModes)
 $fi = [Array]::IndexOf($frameVals, [int]$cfg.frame); $cbFrame.SelectedIndex = $(if ($fi -ge 0) { $fi } else { 2 })
-$tip0 = New-Object Windows.Forms.ToolTip; $tip0.SetToolTip($cbFrame, "Вид окна при выключенном полном экране. Настоящая рамка: родной заголовок Windows, окно двигается и без фокуса игры. Полоса-заголовок: прежний вариант, полоса над окном. Без рамки: окно в углу экрана, как в оригинале. Разрешение лучше брать меньше экрана.")
+$tip0 = New-Object Windows.Forms.ToolTip; $tip0.SetToolTip($cbFrame, "Вид окна при выключенном полном экране. Настоящая рамка: родной заголовок Windows (светлый, стиль Windows 10). окно двигается и без фокуса игры. Полоса-заголовок: прежний вариант, полоса над окном. Без рамки: окно в углу экрана, как в оригинале. Разрешение лучше брать меньше экрана.")
 $chFull.Add_CheckedChanged({ $cbFrame.Enabled = -not $chFull.Checked }); $cbFrame.Enabled = -not $chFull.Checked
 
 $null = Add-Ctl $g (New-Text "Размер шрифта") 12 96 96 22
