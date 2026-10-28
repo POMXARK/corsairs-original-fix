@@ -147,7 +147,7 @@ $Osd = @{ x = 0.0; y = 0.0; size = 14 }
 $osdFile = Join-Path $PSScriptRoot "osd.ini"
 if (Test-Path $osdFile) {
     foreach ($l in [IO.File]::ReadAllLines($osdFile)) {
-        if ($l -match "^(x|y|size)=([0-9.]+)$") { $Osd[$Matches[1]] = [double]::Parse($Matches[2], [Globalization.CultureInfo]::InvariantCulture) }
+        foreach ($m in [regex]::Matches($l, "(x|y|size)=([0-9.]+)")) { $Osd[$m.Groups[1].Value] = [double]::Parse($m.Groups[2].Value, [Globalization.CultureInfo]::InvariantCulture) }   # also "x=1 y=0" on one line
     }
 }
 
@@ -158,13 +158,16 @@ $script:hooked = $false
 $script:hookLive = $false   # the debug font draws only when the gameplay frames come through the hook
 function Poke-Text($offset, $size, $text) {
     $b = New-Object byte[] $size
-    $a = [Text.Encoding]::ASCII.GetBytes($text)
+    $a = [Text.Encoding]::ASCII.GetBytes($text.Replace("%", "%%"))   # the text function of the engine is a printf: a lone % reads arguments that are not there and hangs the game
     [Array]::Copy($a, $b, [Math]::Min($a.Length, $size - 1))
     [void][GameHook]::Poke($offset, $b)
 }
+$script:osdN = 0; $script:fpsText = ""; $script:msgText = ""; $script:msgPos = 0, 24
 $script:fpsShown = $true   # F10 shows and hides the counter
 function Show-Fps($text) {
     if (-not $script:fpsShown) { $text = "" }
+    $script:fpsText = $text
+    if ($text -and (++$script:osdN % 5 -eq 0) -and -not $NoFpsLog) { Log "osd: $text" }
     if ($script:hooked) { if ($script:hookLive) { Poke-Text 0x10 48 $text } }
     elseif ($overlay) { $overlay.Text1.Text = $(if ($text) { $text } else { " " }) }
 }
@@ -224,21 +227,44 @@ function Stop-Video($proc) {
     if (-not $proc.WaitForExit(15000)) { $proc.Kill() }
 }
 
+Add-Type @"
+using System; using System.Collections.Concurrent; using System.Diagnostics;
+// keeps every line that PresentMon writes (one per frame, hundreds a second): reading them one by one from the script loses most of them
+public class FpsPipe {
+    public ConcurrentQueue<string> Q = new ConcurrentQueue<string>();
+    public void Attach(Process p) { p.OutputDataReceived += delegate(object s, DataReceivedEventArgs e) { if (e.Data != null) Q.Enqueue(e.Data); }; p.BeginOutputReadLine(); }
+}
+"@
+
 # PresentMon writes a row of CSV per presented frame to its stdout (a file it writes is locked against reading)
 function Start-Fps($game) {
     $psi = New-Object Diagnostics.ProcessStartInfo (Get-PresentMon)
     $psi.Arguments = "--process_id $($game.Id) --output_stdout --stop_existing_session --terminate_on_proc_exit --no_console_stats"
     $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true; $psi.RedirectStandardOutput = $true
     $p = [Diagnostics.Process]::Start($psi)
-    return @{ Proc = $p; Task = $p.StandardOutput.ReadLineAsync(); Col = -1; Acc = (New-Object Collections.Generic.List[double]); N = 0 }
+    $pipe = New-Object FpsPipe; $pipe.Attach($p)
+    return @{ Proc = $p; Pipe = $pipe; Col = -1; Acc = (New-Object Collections.Generic.List[double]); N = 0 }
+}
+
+# FPS: what DDrawCompat presents (PresentMon), GAME: frames per second that pass through the code of the engine (the hook counts them), CPU: the share of one core
+$script:dbg = @{ Frames = -1; At = [datetime]::Now; Cpu = [TimeSpan]::Zero }
+function Debug-Line($pres) {
+    $now = [datetime]::Now; $dt = ($now - $dbg.At).TotalSeconds
+    $gf = -1.0
+    if ($hooked) { $fr = [GameHook]::Peek(0x7C); if ($dbg.Frames -ge 0 -and $fr -ge $dbg.Frames -and $dt -gt 0) { $gf = ($fr - $dbg.Frames) / $dt }; $dbg.Frames = $fr }
+    $cpu = -1
+    try { $gameProc.Refresh(); $t = $gameProc.TotalProcessorTime; if ($dt -gt 0) { $cpu = [int](100 * ($t - $dbg.Cpu).TotalSeconds / $dt) }; $dbg.Cpu = $t } catch { }
+    $dbg.At = $now
+    $line = ("FPS {0:0}" -f $pres)
+    if ($gf -ge 0) { $line += (" | GAME {0:0} ({1:0}ms)" -f $gf, $(if ($gf -gt 0) { 1000 / $gf } else { 0 })) }
+    if ($cpu -ge 0) { $line += (" | CPU {0}" -f $cpu) }
+    return $line
 }
 
 function Read-Fps($s) {
     $ms = New-Object Collections.Generic.List[double]
-    while ($s.Task.IsCompleted) {
-        $line = $s.Task.Result
-        if ($null -eq $line) { break }   # PresentMon has ended
-        $s.Task = $s.Proc.StandardOutput.ReadLineAsync()
+    $line = $null
+    while ($s.Pipe.Q.TryDequeue([ref]$line)) {
         $f = $line.Split(",")
         if ($s.Col -lt 0) {
             foreach ($n in "MsBetweenPresents", "FrameTime") { $i = [Array]::IndexOf($f, $n); if ($i -ge 0) { $s.Col = $i; break } }
@@ -252,8 +278,8 @@ function Read-Fps($s) {
     if ($ms.Count -gt 0) {
         $s.Acc.AddRange($ms)
         $one = 0.0; foreach ($x in $ms) { $one += $x }
-        Show-Fps ("FPS {0:0}" -f (1000 * $ms.Count / $one))
-    } else { Show-Fps "FPS 0" }
+        Show-Fps (Debug-Line (1000 * $ms.Count / $one))
+    } else { Show-Fps (Debug-Line 0) }
     if ($s.N % 5 -eq 0 -and $s.Acc.Count -gt 0) {
         $ms = $s.Acc; $s.Acc = New-Object Collections.Generic.List[double]
         $sum = 0.0; foreach ($x in $ms) { $sum += $x }
@@ -264,6 +290,7 @@ function Read-Fps($s) {
 }
 
 $game = Wait-Game
+$gameProc = $game
 Log "game started (pid $($game.Id)); F8 screenshot, F9 video, F10 fps on/off, fps every 5 s, on screen: $ShowFps"
 $fps = $null
 if (-not $NoFps -and ($ShowFps -or -not $NoFpsLog)) {
@@ -277,7 +304,8 @@ if (-not $NoHook -and (Test-Path $binFile)) {
     else {
         $hooked = $true
         $scr = [Windows.Forms.Screen]::PrimaryScreen.Bounds
-        $px = [int]($Osd.x * ($scr.Width - 8 * 8)); $py = [int]($Osd.y * ($scr.Height - 20))
+        $px = [int]($Osd.x * ($scr.Width - 10 * 40)); $py = [int]($Osd.y * ($scr.Height - 20))
+        $script:fpsPos = $px, $py
         [void][GameHook]::Poke(0, [BitConverter]::GetBytes($px) + [BitConverter]::GetBytes($py))
         Log "hook: drawing inside the game, counter at $px,$py"
     }
@@ -289,8 +317,9 @@ function Notify($text, $color, $seconds, $ascii) {
     if ($hooked) {
         if ($hookLive) {
             $w = [Windows.Forms.Screen]::PrimaryScreen.Bounds.Width
-            [void][GameHook]::Poke(8, [BitConverter]::GetBytes([int](($w - 8 * $ascii.Length) / 2)) + [BitConverter]::GetBytes(24))
-            Poke-Text 0x40 64 $ascii
+            $script:msgText = $ascii; $script:msgPos = [int](($w - 8 * $ascii.Length) / 2), 24
+            [void][GameHook]::Poke(8, [BitConverter]::GetBytes($msgPos[0]) + [BitConverter]::GetBytes($msgPos[1]))
+            Poke-Text 0x40 60 $ascii
         }
         return
     }
@@ -322,9 +351,14 @@ while (-not $game.HasExited) {
     if ($d10 -and -not $f10) { $fpsShown = -not $fpsShown; Log "fps counter $(if ($fpsShown) { 'on' } else { 'off' })"; if (-not $fpsShown) { Show-Fps "" } }
     $f8 = $d8; $f9 = $d9; $f10 = $d10
     [Windows.Forms.Application]::DoEvents()
-    if ($hooked) { if ($toastUntil -ne [datetime]::MinValue -and (Get-Date) -gt $toastUntil) { Poke-Text 0x40 64 ""; $toastUntil = [datetime]::MinValue } }
+    if ($hooked) { if ($toastUntil -ne [datetime]::MinValue -and (Get-Date) -gt $toastUntil) { Poke-Text 0x40 60 ""; $msgText = ""; $toastUntil = [datetime]::MinValue } }
     elseif ($toast.Visible) { if ((Get-Date) -gt $toastUntil) { $toast.Hide() } elseif ($tick % 10 -eq 0) { $toast.Raise() } }
     if ($overlay) { if ($tick % 10 -eq 0) { $overlay.Raise() }; if ($tick % 300 -eq 20) { Log ("overlay: " + $overlay.Where([uint32]$game.Id)) } }
+    if ($hooked -and $hookLive -and $tick % 5 -eq 0) {   # something in the game zeroes the page now and then: the strings are written again
+        [void][GameHook]::Poke(0, [BitConverter]::GetBytes([int]$fpsPos[0]) + [BitConverter]::GetBytes([int]$fpsPos[1]) + [BitConverter]::GetBytes([int]$msgPos[0]) + [BitConverter]::GetBytes([int]$msgPos[1]))
+        Poke-Text 0x10 48 $fpsText
+        Poke-Text 0x40 60 $msgText
+    }
     if ($hooked -and $tick % 10 -eq 5) {
         $fr = [GameHook]::Peek(0x7C)
         if (-not $hookLive -and $fr -ge 100) { $hookLive = $true; Log "hook: gameplay frames reached, text on" }   # no text on the loading screens

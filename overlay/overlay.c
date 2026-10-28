@@ -5,7 +5,7 @@
  * strings that capture.ps1 keeps in the data page and goes on to the flip. No imports and no relocations: every address is
  * a constant, the engine does not move (base 0x400000), the cave is placed at a fixed address.
  *
- * data page (0x7E000000): int fps_x, fps_y, msg_x, msg_y; char fps[48] at +0x10; char msg[64] at +0x40; int frames at +0x7C; an empty string draws nothing.
+ * data page (0x7E000000): int fps_x, fps_y, msg_x, msg_y; char fps[48] at +0x10; char msg[60] at +0x40; int frames at +0x7C; an empty string draws nothing.
  * Build: ./build_overlay.sh  ->  overlay.bin (the code, loaded at 0x7E001000).
  */
 typedef void (__attribute__((cdecl)) *TextFn)(void *font, int x, int y, const char *text);
