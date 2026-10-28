@@ -1,6 +1,6 @@
 <#
 Fixes the original «Корсары» (Sea Dogs, 2000, ENGINE.exe) on Windows 10/11: wraps its DirectDraw into Direct3D with
-DDrawCompat and sets engine.ini (32-bit colour). Nothing of the game is stored here: the wrapper is downloaded from its official
+DDrawCompat and sets engine.ini and DDrawCompat.ini (16-bit colour kept). Nothing of the game is stored here: the wrapper is downloaded from its official
 release (version and SHA-256 are pinned below), the game files stay where they are; every file that is changed is saved as <name>.orig.
 
   powershell -ExecutionPolicy Bypass -File install.ps1                   # find the game, install, fullscreen 1280x960
@@ -51,6 +51,8 @@ $ini = Join-Path $GameDir "engine.ini"
 $dll = Join-Path $GameDir "ddraw.dll"
 
 if ($Uninstall) {
+    $cfg = Join-Path $GameDir "DDrawCompat.ini"
+    if (Test-Path $cfg) { Remove-Item $cfg; Write-Host "removed DDrawCompat.ini" }
     foreach ($p in @($dll, $ini)) {
         if (Test-Path "$p.orig") { Move-Item "$p.orig" $p -Force; Write-Host "restored $(Split-Path -Leaf $p)" }
         elseif ($p -eq $dll -and (Test-Path $p)) { Remove-Item $p; Write-Host "removed ddraw.dll" }
@@ -70,10 +72,11 @@ Expand-Archive $zip $tmp
 
 Save-Original $dll
 Copy-Item (Join-Path $tmp "ddraw.dll") $dll -Force
+Copy-Item (Join-Path $Here "DDrawCompat.ini") (Join-Path $GameDir "DDrawCompat.ini") -Force
 
 Save-Original $ini
-Set-IniKey $ini "BPP" 32   # BPP 16 is the cause of the purple/green colours: the game reads the 16-bit pixel format wrong
+Set-IniKey $ini "BPP" 16   # the game is 16-bit; DDrawCompat.ini (DesktopColorDepth=16) keeps it so on a 32-bit desktop
 Set-IniKey $ini "WINDOW_WIDTH" $Width
 Set-IniKey $ini "WINDOW_HEIGHT" $Height
 Set-IniKey $ini "WINDOW_MODE" ($(if ($Windowed) { 1 } else { 0 }))
-Write-Host "done: DDrawCompat $DdVersion, engine.ini BPP 32, $Width x $Height" ($(if ($Windowed) { "windowed" } else { "fullscreen" }))
+Write-Host "done: DDrawCompat $DdVersion, engine.ini BPP 16, $Width x $Height" ($(if ($Windowed) { "windowed" } else { "fullscreen" }))
