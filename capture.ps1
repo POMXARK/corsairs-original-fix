@@ -162,9 +162,11 @@ function Poke-Text($offset, $size, $text) {
     [Array]::Copy($a, $b, [Math]::Min($a.Length, $size - 1))
     [void][GameHook]::Poke($offset, $b)
 }
+$script:fpsShown = $true   # F10 shows and hides the counter
 function Show-Fps($text) {
+    if (-not $script:fpsShown) { $text = "" }
     if ($script:hooked) { if ($script:hookLive) { Poke-Text 0x10 48 $text } }
-    elseif ($overlay) { $overlay.Text1.Text = $text }
+    elseif ($overlay) { $overlay.Text1.Text = $(if ($text) { $text } else { " " }) }
 }
 
 function Get-Tool($file, $url, $sha, [scriptblock]$unpack) {
@@ -262,7 +264,7 @@ function Read-Fps($s) {
 }
 
 $game = Wait-Game
-Log "game started (pid $($game.Id)); F8 screenshot, F9 video, fps every 5 s, on screen: $ShowFps"
+Log "game started (pid $($game.Id)); F8 screenshot, F9 video, F10 fps on/off, fps every 5 s, on screen: $ShowFps"
 $fps = $null
 if (-not $NoFps -and ($ShowFps -or -not $NoFpsLog)) {
     try { $fps = Start-Fps $game } catch { Log "fps: PresentMon did not start: $($_.Exception.Message)" }
@@ -297,7 +299,7 @@ function Notify($text, $color, $seconds, $ascii) {
     $toast.Raise()
 }
 if ($ShowFps -and -not $hooked) { $overlay = New-Object FpsOverlay($Osd.x, $Osd.y, [int]$Osd.size); $overlay.Show(); Log "overlay at $($overlay.Left),$($overlay.Top) size $($overlay.Width)x$($overlay.Height) from osd.ini x=$($Osd.x) y=$($Osd.y)" }
-$video = $null; $f8 = $false; $f9 = $false; $tick = 0
+$video = $null; $f8 = $false; $f9 = $false; $f10 = $false; $tick = 0
 while (-not $game.HasExited) {
     Start-Sleep -Milliseconds 100
     $tick++
@@ -316,7 +318,9 @@ while (-not $game.HasExited) {
             else { $n = Join-Path $Shots ("{0:yyyy-MM-dd_HH-mm-ss}.mp4" -f (Get-Date)); $video = Start-Video $n; Log "video $n"; Notify "● Запись началась (F9 - стоп)" ([Drawing.Color]::Red) 3 "RECORDING (F9 - STOP)" }
         } catch { Log "video failed: $($_.Exception.Message)"; Notify "Запись не удалась" ([Drawing.Color]::Red) 3 "RECORDING FAILED" }
     }
-    $f8 = $d8; $f9 = $d9
+    $d10 = $focus -and (([CapNative]::GetAsyncKeyState(0x79) -band 0x8000) -ne 0)
+    if ($d10 -and -not $f10) { $fpsShown = -not $fpsShown; Log "fps counter $(if ($fpsShown) { 'on' } else { 'off' })"; if (-not $fpsShown) { Show-Fps "" } }
+    $f8 = $d8; $f9 = $d9; $f10 = $d10
     [Windows.Forms.Application]::DoEvents()
     if ($hooked) { if ($toastUntil -ne [datetime]::MinValue -and (Get-Date) -gt $toastUntil) { Poke-Text 0x40 64 ""; $toastUntil = [datetime]::MinValue } }
     elseif ($toast.Visible) { if ((Get-Date) -gt $toastUntil) { $toast.Hide() } elseif ($tick % 10 -eq 0) { $toast.Raise() } }
