@@ -13,8 +13,9 @@
  *   +0x400.. char fmt[4][32] at +0x400, +0x420, +0x440, +0x460 (framerate, frametime, 1% low, 0.1% low) and +0x480 (the scale, ms): formats of the text function, written by capture.ps1
  *   +0x100 unsigned short ring[256]: the frame times in tenths of a millisecond
  *   +0xB0 the real GetTickCount, +0xB4 ms of fast_tick(), +0xB8 TSC of that ms, +0xBC 1 = fast_tick is ready (capture.ps1 then points the IAT slot 0x431050 at it), +0xC0 ms of the last sync
- *   +0xC4 the real SetCursorPos, +0xD0 the real MoveWindow (move_fix = code+0xC0, slot 0x43116C), +0xC8/+0xCC the origin of the game window on the screen, +0xD4 1 = hook() calls the real MoveWindow to put the window (DAT_0044d704) at +0xC8/+0xCC (capture.ps1 points the IAT slot 0x43119C at cursor_fix = code+0x80 in a moved window)
+ *   +0xC4 the real SetCursorPos, +0xD0 the real MoveWindow (move_fix = code+0x3000, slot 0x43116C), +0xC8/+0xCC the origin of the game window on the screen, +0xD4 1 = hook() calls the real MoveWindow to put the window (DAT_0044d704) at +0xC8/+0xCC (capture.ps1 points the IAT slot 0x43119C at cursor_fix = code+0x80 in a moved window)
  *   +0xD8 the real Blt (slot 0x14 of the vtable of the primary surface), blt_fix = code+0x1000 (capture.ps1 points the slot at it in a moved window)
+ *   +0x900/+0x904 the client area from the outer corner of the window with a real frame (frame=3), +0x908/+0x90C the width/height the frame adds: move_fix and the move of hook() put the outer rectangle so that the client area is the size of the game
  *   +0xF8 the real GetCursorPos, cursor_get = code+0x2000 (capture.ps1 points the import of GetCursorPos of the loaded modules of the game at it in a moved window)
  *   +0xF4 frame limit N fps (0 = none): hook() waits until 1/N s have passed since the previous frame (DDrawCompat's FpsLimiter does not touch a window that is drawn with Blt)
  *   +0xA0 key repeat on (0/1, capture.ps1 writes 1 while the game is the window in front); +0x500 unsigned hold[256]: GetTickCount of the key press (0 = up)
@@ -56,13 +57,6 @@ __attribute__((stdcall)) unsigned fast_tick(void)
 __attribute__((stdcall, aligned(128))) int cursor_fix(int x, int y)
 {
     return ((int (__attribute__((stdcall)) *)(int, int))DATA[0xC4 / 4])(x + DATA[0xC8 / 4], y + DATA[0xCC / 4]);
-}
-
-/* The same for MoveWindow(hwnd, 0, 0, w, h, repaint) of the game (at the start and after the intro, when it sets the display mode again): the window stays where it was put.
- * +0xD0 is the real MoveWindow. */
-__attribute__((stdcall, aligned(64))) int move_fix(void *h, int x, int y, int w, int ht, int repaint)
-{
-    return ((int (__attribute__((stdcall)) *)(void *, int, int, int, int, int))DATA[0xD0 / 4])(h, x + DATA[0xC8 / 4], y + DATA[0xCC / 4], w, ht, repaint);
 }
 
 static void fill(unsigned short *base, int pitch, int sw, int sh, int x, int y, int w, int h, unsigned short c)
@@ -107,7 +101,7 @@ __attribute__((fastcall, aligned(256))) void hook(void *dev)   /* at +0x100 of t
 
     if (DATA[0xD4 / 4]) {   /* a move that capture.ps1 asks for: it is made here, in the thread of the game, so DDrawCompat takes it for a move of the game window itself (from outside its picture stops) */
         DATA[0xD4 / 4] = 0;
-        ((int (__attribute__((stdcall)) *)(void *, int, int, int, int, int))DATA[0xD0 / 4])(*(void *volatile *)0x44D704, DATA[0xC8 / 4], DATA[0xCC / 4], *(volatile int *)0x7C54FC, *(volatile int *)0x7C5500, 1);
+        ((int (__attribute__((stdcall)) *)(void *, int, int, int, int, int))DATA[0xD0 / 4])(*(void *volatile *)0x44D704, DATA[0xC8 / 4] - DATA[0x900 / 4], DATA[0xCC / 4] - DATA[0x904 / 4], *(volatile int *)0x7C54FC + DATA[0x908 / 4], *(volatile int *)0x7C5500 + DATA[0x90C / 4], 1);
     }
     DATA[31] = DATA[31] + 1;                  /* how many frames came here: capture.ps1 logs it */
     DATA[0x94 / 4] = (int)now;
@@ -237,4 +231,11 @@ __attribute__((stdcall, aligned(8192))) int cursor_get(int *pt)
     int ret = ((int (__attribute__((stdcall)) *)(int *))DATA[0xF8 / 4])(pt);
     if (ret && pt) { pt[0] -= DATA[0xC8 / 4]; pt[1] -= DATA[0xCC / 4]; }
     return ret;
+}
+
+/* The same for MoveWindow(hwnd, 0, 0, w, h, repaint) of the game (at the start and after the intro, when it sets the display mode again): the window stays where it was put.
+ * +0xD0 is the real MoveWindow. */
+__attribute__((stdcall, aligned(4096))) int move_fix(void *h, int x, int y, int w, int ht, int repaint)
+{
+    return ((int (__attribute__((stdcall)) *)(void *, int, int, int, int, int))DATA[0xD0 / 4])(h, x + DATA[0xC8 / 4] - DATA[0x900 / 4], y + DATA[0xCC / 4] - DATA[0x904 / 4], w + DATA[0x908 / 4], ht + DATA[0x90C / 4], repaint);
 }

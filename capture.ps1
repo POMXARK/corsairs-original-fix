@@ -24,7 +24,7 @@ param(
 )
 $ErrorActionPreference = "Stop"
 # fix.ini next to this script (written by the settings window): the switches of the patches, the logs, the screenshots and the video; the command line only adds "off" switches
-$Cfg = @{ keyrepeat = 1; finetick = 0; screenshots = 1; video = 1; fpslog = 1; osd = 1; statlog = 1; frame = 1; skipintro = 1; fpslimit = 0; autotest = 0; testx = 0; testy = 0 }
+$Cfg = @{ keyrepeat = 1; finetick = 0; screenshots = 1; video = 1; fpslog = 1; osd = 1; statlog = 1; frame = 3; skipintro = 1; fpslimit = 0; autotest = 0; testx = 0; testy = 0 }
 $cfgFile = Join-Path $PSScriptRoot "fix.ini"
 if (Test-Path $cfgFile) { foreach ($l in [IO.File]::ReadAllLines($cfgFile)) { if ($l -match "^\s*(\w+)\s*=\s*(\d+)\s*$" -and $Cfg.ContainsKey($Matches[1])) { $Cfg[$Matches[1]] = [int]$Matches[2] } } }
 if (-not $Cfg.keyrepeat) { $NoKeyRepeat = [switch]$true }
@@ -58,6 +58,7 @@ public static class CapNative {
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] public static extern IntPtr GetWindowLongPtr(IntPtr h, int index);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] public static extern IntPtr SetWindowLongPtr(IntPtr h, int index, IntPtr value);
     [DllImport("user32.dll")] public static extern bool AdjustWindowRectEx(ref RECT r, uint style, bool menu, uint exStyle);
+    [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref PT p);
     [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int hh, uint flags);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
@@ -116,7 +117,7 @@ public static class GameHook {
         int now = BitConverter.ToInt32(site, 1);
         if (now == want) return "";   // already hooked
         if (now != unchecked((int)0xFFFE9691)) return "ENGINE.exe is not the expected one at the flip";
-        IntPtr mem = VirtualAllocEx(proc, (IntPtr)Data, (UIntPtr)0x4000, 0x3000, 0x40);
+        IntPtr mem = VirtualAllocEx(proc, (IntPtr)Data, (UIntPtr)0x6000, 0x3000, 0x40);
         if (mem != (IntPtr)Data) return "no room at 0x7E000000";
         if (!WriteProcessMemory(proc, (IntPtr)Code, code, code.Length, out n)) return "code not written";
         if (mode == 1) return "";   // memory and code only, the call is not patched (a test)
@@ -186,7 +187,7 @@ public static class GameHook {
         return ok;
     }
     // SetCursorPos and MoveWindow of the game get the origin of its window added (overlay.c cursor_fix, move_fix): it takes the window for the screen
-    public static bool WindowFix() { return Redirect(0x43119C, 0xC4, Code + 0x80) && Redirect(0x43116C, 0xD0, Code + 0xC0); }
+    public static bool WindowFix() { return Redirect(0x43119C, 0xC4, Code + 0x80) && Redirect(0x43116C, 0xD0, Code + 0x3000); }
     // the Blt of the primary surface gets the origin of the window added to its rectangle (overlay.c blt_fix): the vtable of that surface is in DDrawCompat, the slot is 0x14
     public static bool BltFix() {
         byte[] b = new byte[4]; int n; uint old;
@@ -277,7 +278,9 @@ if (Test-Path $osdFile) {
 }
 
 $script:statLog = [bool]$Cfg.statlog   # F11 stops the periodic statistics lines (osd, fps avg, hook frames); screenshots, videos and errors are still logged
-function Log($text) { if (-not $script:statLog -and $text -match "^(osd:|fps avg|hook: frames)") { return }; Add-Content $FpsLog ("{0:yyyy-MM-dd HH:mm:ss} {1}" -f (Get-Date), $text) -Encoding UTF8 }
+function Log($text) { if (-not $script:statLog -and $text -match "^(osd:|fps avg|hook: frames)") { return }; $line = "{0:yyyy-MM-dd HH:mm:ss} {1}" -f (Get-Date), $text
+    foreach ($try in 1..5) { try { Add-Content $FpsLog $line -Encoding UTF8; return } catch { Start-Sleep -Milliseconds 40 } }   # the log is open in another program (a reader, an editor): a lost line must not stop the whole script (ErrorActionPreference Stop)
+}
 
 # in the game (overlay.bin hooked into ENGINE.exe) when it is there, else in a window on top
 $script:hooked = $false
@@ -377,6 +380,28 @@ function Set-Frame {
         if (-not $script:placed) { $script:placed = $true; $wa = [Windows.Forms.Screen]::FromHandle($h).WorkingArea; if ($Cfg.testx -or $Cfg.testy) { Set-Pos $Cfg.testx $Cfg.testy } else { Set-Pos ($wa.X + [int](($wa.Width - $w) / 2)) ($wa.Y + [int](($wa.Height - $ht) / 2)) }; Log "window centred only" }
         if ([CapNative]::GetForegroundWindow() -eq $h) { $r2 = New-Object CapNative+RECT; [void][CapNative]::GetWindowRect($h, [ref]$r2); [void][CapNative]::ClipCursor([ref]$r2); $script:clipSet = $true }
         elseif ($script:clipSet) { [void][CapNative]::ClipCursorOff([IntPtr]::Zero); $script:clipSet = $false }
+        return
+    }
+    if ($Cfg.frame -eq 3) {   # test: the real frame of the window (caption, system menu), no strip: the window is dragged by the system
+        if (-not $script:placed) {
+            $script:placed = $true
+            $rc = New-Object CapNative+RECT; $rc.Right = $w; $rc.Bottom = $ht
+            $ns = ([int64][CapNative]::GetWindowLongPtr($h, -16) -band 0x7FFFFFFF) -bor 0xCA0000   # no WS_POPUP; WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
+            [void][CapNative]::AdjustWindowRectEx([ref]$rc, [uint32]$ns, $false, [uint32][int64][CapNative]::GetWindowLongPtr($h, -20))
+            $ints = @((0 - $rc.Left), (0 - $rc.Top), (($rc.Right - $rc.Left) - $w), (($rc.Bottom - $rc.Top) - $ht))
+            [void][GameHook]::Poke(0x900, ($ints | % { [BitConverter]::GetBytes([int]$_) } | % { $_ }))
+            [void][CapNative]::SetWindowLongPtr($h, -16, [IntPtr]$ns)
+            $wa = [Windows.Forms.Screen]::FromHandle($h).WorkingArea
+            Set-Pos ($wa.X + [Math]::Max(0, [int](($wa.Width - $w) / 2))) ($wa.Y + [Math]::Max($ints[1], [int](($wa.Height - $ht) / 2)))
+            Log "real frame: style $($ns.ToString('X')), client in outer $($ints[0]),$($ints[1]), extra $($ints[2])x$($ints[3]), game $w x $ht"
+            return
+        }
+        $pt = New-Object CapNative+PT; [void][CapNative]::ClientToScreen($h, [ref]$pt)   # the client origin follows the window when it is dragged by the caption
+        if ($pt.X -ne $script:lastCx -or $pt.Y -ne $script:lastCy) { $script:lastCx = $pt.X; $script:lastCy = $pt.Y; [void][GameHook]::Poke(0xC8, [BitConverter]::GetBytes([int]$pt.X) + [BitConverter]::GetBytes([int]$pt.Y)) }
+        if ([CapNative]::GetForegroundWindow() -eq $h) {   # the game keeps the cursor in 0,0 - 800x600 of the screen (ClipCursor): the whole window with its caption is let in
+            $have = New-Object CapNative+RECT; [void][CapNative]::GetClipCursor([ref]$have)
+            if ($have.Left -ne $r.Left -or $have.Top -ne $r.Top -or $have.Right -ne $r.Right -or $have.Bottom -ne $r.Bottom) { [void][CapNative]::ClipCursor([ref]$r); $script:clipSet = $true }
+        } elseif ($script:clipSet) { [void][CapNative]::ClipCursorOff([IntPtr]::Zero); $script:clipSet = $false }
         return
     }
     if (-not $script:bar) {
@@ -621,7 +646,7 @@ function Auto-Step {
     elseif ($script:autoStep -eq 1 -and $t -gt 7) { [Windows.Forms.Cursor]::Position = New-Object Drawing.Point(($r.Left + 400), ($r.Top + 140)); $script:autoStep = 2 }
     elseif ($script:autoStep -eq 2 -and $t -gt 8) { $script:h2 = Snap "2_button1"; [Windows.Forms.Cursor]::Position = New-Object Drawing.Point(($r.Left + 400), ($r.Top + 450)); $script:autoStep = 3 }
     elseif ($script:autoStep -eq 3 -and $t -gt 9) { $script:h3 = Snap "3_button2"; Log "autotest: window $($r.Left),$($r.Top) hashes $($script:h1) $($script:h2) $($script:h3) -> $(if ($script:h1 -ne $script:h2 -or $script:h2 -ne $script:h3) { 'screen changes' } else { 'SCREEN STATIC' })"; [Windows.Forms.Cursor]::Position = New-Object Drawing.Point(($r.Left + 8), ($r.Top + 300)); $script:autoStep = 4 }
-    elseif ($script:autoStep -eq 4 -and $t -gt 10) { $script:k0 = Snap "4_menu" $r; $script:autoStep = 5; [Windows.Forms.Cursor]::Position = New-Object Drawing.Point(($r.Left + 400), ($r.Top + 479)); Start-Sleep -Milliseconds 300; $cc = [Windows.Forms.Cursor]::Position; Log "autotest: before click cursor $($cc.X),$($cc.Y) window $($r.Left),$($r.Top) rel $($cc.X - $r.Left),$($cc.Y - $r.Top) game-mouse $([GameHook]::PeekAbs(0x7C75F4)),$([GameHook]::PeekAbs(0x7C75F8))"; if ($Cfg.autotest -ne 2) { [CapNative]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 80; [CapNative]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero) } }   # autotest=2: no click
+    elseif ($script:autoStep -eq 4 -and $t -gt 10) { $script:k0 = Snap "4_menu" $r; $script:autoStep = 5; $ox = $r.Left; $oy = $r.Top; if ($Cfg.frame -eq 3) { $ox = [GameHook]::PeekAbs(0x7E0000C8); $oy = [GameHook]::PeekAbs(0x7E0000CC) }; [Windows.Forms.Cursor]::Position = New-Object Drawing.Point(($ox + 400), ($oy + 479)); Start-Sleep -Milliseconds 300; $cc = [Windows.Forms.Cursor]::Position; Log "autotest: before click cursor $($cc.X),$($cc.Y) window $($r.Left),$($r.Top) rel $($cc.X - $ox),$($cc.Y - $oy) game-mouse $([GameHook]::PeekAbs(0x7C75F4)),$([GameHook]::PeekAbs(0x7C75F8))"; if ($Cfg.autotest -ne 2) { [CapNative]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 80; [CapNative]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero) } }   # autotest=2: no click
     elseif ($script:autoStep -eq 5 -and $t -gt 11.5) { $script:k1 = Snap "5_afterclick" $r; $script:autoStep = 6; [CapNative]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 80; [CapNative]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero) }
     elseif ($script:autoStep -eq 6 -and $t -gt 13) { $script:k2 = Snap "6_afteresc" $r; Log "autotest: keys menu/click/esc hashes $($script:k0) $($script:k1) $($script:k2) -> click $(if ($script:k0 -ne $script:k1) { 'WORKS' } else { 'DEAD' }), Esc $(if ($script:k1 -ne $script:k2) { 'WORKS' } else { 'DEAD' })"; Log "autotest: gui $([CapNative]::Gui($game.MainWindowHandle)) foreground $([CapNative]::GetForegroundWindow()) game $($game.MainWindowHandle)"; $script:autoStep = 7; foreach ($i in 1..2) { [CapNative]::keybd_event(0x28, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 80; [CapNative]::keybd_event(0x28, 0, 2, [UIntPtr]::Zero); Start-Sleep -Milliseconds 200 } }
     elseif ($script:autoStep -eq 7 -and $t -gt 14.5) { $script:k3 = Snap "7_afterdown" $r; Log "autotest: Down x2 -> $(if ($script:k3 -ne $script:k2) { 'WORKS' } else { 'DEAD' })"; $script:autoStep = 8; Stop-Process -Id $game.Id -Force }
