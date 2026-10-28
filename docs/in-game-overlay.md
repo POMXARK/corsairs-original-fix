@@ -45,6 +45,10 @@ DDrawCompat показывает кадр в слоёном окне с флаг
 | +0x10 | строка FPS (48 байт, пустая — не рисуется) |
 | +0x40 | строка уведомления (64 байта) |
 | +0x7C | счётчик кадров через хук |
+| +0xC4 / +0xD0 | настоящие `SetCursorPos` / `MoveWindow` |
+| +0xC8 / +0xCC | начало окна (client origin) |
+| +0xF4 | лимит кадров (fpslimit) |
+| +0xF8 | настоящий `GetCursorPos` (для `cursor_get`) |
 
 6. Текст включается после 100 кадров через хук, чтобы не рисовать на экранах загрузки. Раз в 5 с в `fps.log` пишется «hook: frames N, game responding …».
 
@@ -73,6 +77,6 @@ DDrawCompat показывает кадр в слоёном окне с флаг
 
 ## Файлы
 
-- `overlay/overlay.c` — код хука; `build_overlay.sh` — сборка в `overlay.bin`.
+- `overlay/overlay.c` — код хука; `cursor_get` (0x2000) подменяет `GetCursorPos` в модулях интерфейса, см. [click-input-research.md](click-input-research.md); `build_overlay.sh` — сборка в `overlay.bin`.
 - `capture.ps1` — `GameHook` (установка, `Poke`, `Peek`), логика F8/F9/FPS.
 - `install.ps1` — копирует `overlay.bin` в `fix\`.

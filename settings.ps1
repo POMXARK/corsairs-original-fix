@@ -53,7 +53,7 @@ if ((Test-Path $fonts) -and (Test-Path $origFonts)) {
 $f = New-Object Windows.Forms.Form
 $f.Text = "Установки ""Корсаров"""
 $f.AutoScaleMode = "None"
-$f.ClientSize = New-Object Drawing.Size(422, 614)
+$f.ClientSize = New-Object Drawing.Size(422, 638)
 $f.StartPosition = "CenterScreen"
 $f.FormBorderStyle = "FixedDialog"; $f.MaximizeBox = $false; $f.MinimizeBox = $false
 $f.Font = New-Object Drawing.Font("Tahoma", 8.25)
@@ -71,11 +71,16 @@ $cbRes = Add-Ctl $g (New-Object Windows.Forms.ComboBox) 110 26 190 22
 $cbRes.Items.AddRange($modes)
 $cbRes.Text = if ($curW -and $curH) { "${curW}x$curH" } else { $desktop }
 
+# fix.ini: настройки наших патчей, их читают profile.ps1 (задержка, лимит FPS) и capture.ps1 (хук, логи, снимки, видео)
+$cfgPath = Join-Path $Here "fix.ini"
+$cfg = [ordered]@{ lowlag = 1; fpslimit = 0; keyrepeat = 1; finetick = 0; screenshots = 1; video = 1; fpslog = 1; osd = 1; statlog = 1; frame = 1; skipintro = 1; fontauto = 1 }
+if (Test-Path $cfgPath) { foreach ($l in [IO.File]::ReadAllLines($cfgPath)) { if ($l -match "^\s*(\w+)\s*=\s*(\d+)\s*$" -and $cfg.Contains($Matches[1])) { $cfg[$Matches[1]] = [int]$Matches[2] } } }
+
 $chFull = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 62 140 20
 $chFull.Text = "Полный экран"; $chFull.Checked = ($curMode -ne "1"); $chFull.Width = 100
 $chFrame = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 116 62 190 20
-$chFrame.Text = "в окне: рамка, по центру"; $chFrame.Checked = [bool]$cfg.frame
-$tip0 = New-Object Windows.Forms.ToolTip; $tip0.SetToolTip($chFrame, "Окно получает заголовок (его можно перетаскивать) и появляется по центру экрана. Только при выключенном полном экране; разрешение лучше брать меньше экрана.")
+$chFrame.Text = "в окне: заголовок, центр"; $chFrame.Checked = [bool]$cfg.frame
+$tip0 = New-Object Windows.Forms.ToolTip; $tip0.SetToolTip($chFrame, "Над окном игры появляется полоса-заголовок (за неё окно перетаскивается), окно ставится по центру экрана. Только при выключенном полном экране; разрешение лучше брать меньше экрана.")
 $chFull.Add_CheckedChanged({ $chFrame.Enabled = -not $chFull.Checked }); $chFrame.Enabled = -not $chFull.Checked
 
 $null = Add-Ctl $g (New-Text "Размер шрифта") 12 96 96 22
@@ -84,15 +89,10 @@ $nud.DecimalPlaces = 1; $nud.Increment = 0.1; $nud.Minimum = 0.5; $nud.Maximum =
 $nud.Value = [decimal][Math]::Min(4, [Math]::Max(0.5, $curFont))
 $auto = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 184 96 116 22
 $auto.Text = "по экрану"
-$auto.Add_CheckedChanged({ $nud.Enabled = -not $auto.Checked })
+$auto.Add_CheckedChanged({ $nud.Enabled = -not $auto.Checked }); $auto.Checked = [bool]$cfg.fontauto; $nud.Enabled = -not $auto.Checked
 
 $chWasd = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 126 290 22
 $chWasd.Text = "Ходьба в городе на W A S D"; $chWasd.Checked = $curWasd
-
-# fix.ini: настройки наших патчей, их читают profile.ps1 (задержка, лимит FPS) и capture.ps1 (хук, логи, снимки, видео)
-$cfgPath = Join-Path $Here "fix.ini"
-$cfg = [ordered]@{ lowlag = 1; fpslimit = 0; keyrepeat = 1; finetick = 0; screenshots = 1; video = 1; fpslog = 1; osd = 1; statlog = 1; frame = 1 }
-if (Test-Path $cfgPath) { foreach ($l in [IO.File]::ReadAllLines($cfgPath)) { if ($l -match "^\s*(\w+)\s*=\s*(\d+)\s*$" -and $cfg.Contains($Matches[1])) { $cfg[$Matches[1]] = [int]$Matches[2] } } }
 
 # счётчик FPS: место и размер задаются на миниатюре экрана; fix\osd.ini читает capture.ps1
 $osdPath = Join-Path $Here "osd.ini"
@@ -188,7 +188,7 @@ $bPlace = Add-Ctl $g2 (New-Object Windows.Forms.Button) 12 84 138 24
 $bPlace.Text = "Разместить на экране"
 $bPlace.Add_Click({ [void][Windows.Forms.MessageBox]::Show("Счётчик появится на рабочем столе: зажмите его мышью и перетащите. Esc или двойной щелчок - готово.", "FPS"); Show-OsdPlacer })
 
-$g3 = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 340 316 220 0
+$g3 = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 340 316 244 0
 $g3.Text = "Задержка, ввод, логи, снимки"
 function Add-Check($text, $y, $on, $tip) {
     $c = Add-Ctl $g3 (New-Object Windows.Forms.CheckBox) 12 $y 296 22
@@ -202,14 +202,15 @@ $chShot = Add-Check "F8: снимок экрана" 92 $cfg.screenshots "Скр�
 $chVid = Add-Check "F9: запись видео" 116 $cfg.video "ffmpeg пишет рабочий стол в Screenshots; F9 ещё раз - стоп."
 $chLog = Add-Check "Писать FPS в лог (fps.log)" 140 $cfg.fpslog "Строка статистики раз в 5 секунд в Документы\My Games\Sea Dogs\Logs\fps.log"
 $chStat = Add-Check "Строки статистики в логе (F11)" 164 $cfg.statlog "Если выкл., в логе остаются только события: снимки, видео, ошибки."
-$null = Add-Ctl $g3 (New-Text "Лимит FPS") 12 192 70 22
-$cbFps = Add-Ctl $g3 (New-Object Windows.Forms.ComboBox) 86 192 130 22
+$chSkip = Add-Check "Пропускать заставки (Esc сам)" 188 $cfg.skipintro "Ролики logo1/logo2 пропускаются сразу после запуска (Esc посылается игре). Вручную: Esc во время ролика или Shift при запуске."
+$null = Add-Ctl $g3 (New-Text "Лимит FPS") 12 216 70 22
+$cbFps = Add-Ctl $g3 (New-Object Windows.Forms.ComboBox) 86 216 130 22
 $cbFps.Items.AddRange(@("Без ограничения", "30", "45", "60", "75", "90", "120", "144", "165", "240"))
 $cbFps.Text = if ($cfg.fpslimit -gt 0) { "$($cfg.fpslimit)" } else { "Без ограничения" }
 $tip1.SetToolTip($cbFps, "FpsLimiter=flipstart(N) в DDrawCompat.ini. Число можно ввести своё.")
-$null = Add-Ctl $g3 (New-Text "кадров/с") 222 192 70 22
+$null = Add-Ctl $g3 (New-Text "кадров/с") 222 216 70 22
 
-$status = Add-Ctl $f (New-Object Windows.Forms.Label) 8 566 316 44 0
+$status = Add-Ctl $f (New-Object Windows.Forms.Label) 8 590 316 44 0
 $status.Text = "Игра: $GameDir"
 
 function Save-Osd {
@@ -221,7 +222,7 @@ function Save-Cfg {
     $lim = [regex]::Match("$($cbFps.Text)", "\d+").Value
     $cfg.lowlag = [int]$chLow.Checked; $cfg.keyrepeat = [int]$chKeys.Checked; $cfg.finetick = [int]$chFine.Checked
     $cfg.screenshots = [int]$chShot.Checked; $cfg.video = [int]$chVid.Checked; $cfg.fpslog = [int]$chLog.Checked; $cfg.statlog = [int]$chStat.Checked
-    $cfg.osd = [int]$chOsd.Checked; $cfg.frame = [int]$chFrame.Checked; $cfg.fpslimit = $(if ($lim) { [Math]::Min(1000, [int]$lim) } else { 0 })
+    $cfg.osd = [int]$chOsd.Checked; $cfg.fontauto = [int]$auto.Checked; $cfg.frame = [int]$chFrame.Checked; $cfg.skipintro = [int]$chSkip.Checked; $cfg.fpslimit = $(if ($lim) { [Math]::Min(1000, [int]$lim) } else { 0 })
     [IO.File]::WriteAllLines($cfgPath, @($cfg.Keys | ForEach-Object { "$_=$($cfg[$_])" }))
 }
 

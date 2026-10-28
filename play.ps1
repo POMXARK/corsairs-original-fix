@@ -9,5 +9,8 @@ $pa = @{}; if ($Mode) { $pa.Mode = $Mode }
 $cap = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-STA", "-WindowStyle", "Hidden", "-File", (Join-Path $PSScriptRoot "capture.ps1"), "-GameDir", $GameDir)
 if ($NoKeyRepeat) { $cap += "-NoKeyRepeat" }
 if ($NoFineTick) { $cap += "-NoFineTick" }
-Start-Process powershell -WindowStyle Hidden -ArgumentList ($cap | ForEach-Object { if ($_ -match "\s") { "`"$_`"" } else { $_ } })
+$psi = New-Object Diagnostics.ProcessStartInfo "powershell.exe"
+$psi.Arguments = ($cap | ForEach-Object { if ($_ -match "\s") { "`"$_`"" } else { $_ } }) -join " "
+$psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+[void][Diagnostics.Process]::Start($psi)
 Start-Process (Join-Path $GameDir "ENGINE.exe") -WorkingDirectory $GameDir

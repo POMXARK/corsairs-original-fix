@@ -99,7 +99,8 @@ Expand-Archive $zip $tmp
 $new = Join-Path $tmp "ddraw.dll"
 # an already installed DDrawCompat is not an original
 if (-not (Test-Path $dll) -or (Get-FileHash $dll).Hash -ne (Get-FileHash $new).Hash) { Save-Original $dll }
-Copy-Item $new $dll -Force
+# a running game holds ddraw.dll: the same file is not copied again (the settings window can be saved while the game is open)
+if (-not (Test-Path $dll) -or (Get-FileHash $dll).Hash -ne (Get-FileHash $new).Hash) { Copy-Item $new $dll -Force }
 Copy-Item (Join-Path $Here "DDrawCompat.ini") (Join-Path $GameDir "DDrawCompat.ini") -Force
 
 if (-not $Width -or -not $Height) {
