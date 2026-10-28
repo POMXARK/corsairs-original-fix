@@ -111,50 +111,43 @@ function Stop-Video($proc) {
     if (-not $proc.WaitForExit(15000)) { $proc.Kill() }
 }
 
-# PresentMon writes a row per presented frame; the CSV of one run is read in its tail
+# PresentMon writes a row of CSV per presented frame to its stdout (a file it writes is locked against reading)
 function Start-Fps($game) {
-    $csv = Join-Path $env:TEMP "corsairs-presentmon.csv"
-    Remove-Item $csv -ErrorAction SilentlyContinue
     $psi = New-Object Diagnostics.ProcessStartInfo (Get-PresentMon)
-    $psi.Arguments = "--process_id $($game.Id) --output_file `"$csv`" --stop_existing_session --terminate_on_proc_exit --no_console_stats"
-    $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
-    return @{ Proc = [Diagnostics.Process]::Start($psi); Csv = $csv; Pos = 0L; Col = -1; Acc = (New-Object Collections.Generic.List[double]); N = 0 }
+    $psi.Arguments = "--process_id $($game.Id) --output_stdout --stop_existing_session --terminate_on_proc_exit --no_console_stats"
+    $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true; $psi.RedirectStandardOutput = $true
+    $p = [Diagnostics.Process]::Start($psi)
+    return @{ Proc = $p; Task = $p.StandardOutput.ReadLineAsync(); Col = -1; Acc = (New-Object Collections.Generic.List[double]); N = 0 }
 }
 
 function Read-Fps($s) {
-    if (-not (Test-Path $s.Csv)) { return }
-    $fs = [IO.File]::Open($s.Csv, "Open", "Read", "ReadWrite")
-    try {
-        $sr = New-Object IO.StreamReader($fs)
+    $ms = New-Object Collections.Generic.List[double]
+    while ($s.Task.IsCompleted) {
+        $line = $s.Task.Result
+        if ($null -eq $line) { break }   # PresentMon has ended
+        $s.Task = $s.Proc.StandardOutput.ReadLineAsync()
+        $f = $line.Split(",")
         if ($s.Col -lt 0) {
-            $head = $sr.ReadLine()
-            if (-not $head) { return }
-            $cols = $head.Split(",")
-            foreach ($n in "MsBetweenPresents", "FrameTime") { $i = [Array]::IndexOf($cols, $n); if ($i -ge 0) { $s.Col = $i; break } }
-            if ($s.Col -lt 0) { Log "fps: no frame-time column in $($head)"; $s.Col = 9999; return }
-            $s.Pos = $fs.Position
-        } else { $fs.Position = $s.Pos; $sr.DiscardBufferedData() }
-        $ms = New-Object Collections.Generic.List[double]
-        while ($null -ne ($line = $sr.ReadLine())) {
-            $f = $line.Split(",")
-            $v = 0.0
-            if ($f.Count -gt $s.Col -and [double]::TryParse($f[$s.Col], [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$v) -and $v -gt 0) { $ms.Add($v) }
-            $s.Pos += [Text.Encoding]::UTF8.GetByteCount($line) + 2
+            foreach ($n in "MsBetweenPresents", "FrameTime") { $i = [Array]::IndexOf($f, $n); if ($i -ge 0) { $s.Col = $i; break } }
+            if ($s.Col -lt 0) { Log "fps: no frame-time column in $line"; $s.Col = 9999 }
+            continue
         }
-        $s.N++
-        if ($ms.Count -gt 0) {
-            $s.Acc.AddRange($ms)
-            $one = 0.0; foreach ($x in $ms) { $one += $x }
-            if ($overlay) { $overlay.Text1.Text = "FPS {0:0}" -f (1000 * $ms.Count / $one) }
-        } elseif ($overlay) { $overlay.Text1.Text = "FPS 0" }
-        if ($s.N % 5 -eq 0 -and $s.Acc.Count -gt 0) {
-            $ms = $s.Acc; $s.Acc = New-Object Collections.Generic.List[double]
-            $sum = 0.0; foreach ($x in $ms) { $sum += $x }
-            $sorted = $ms.ToArray(); [Array]::Sort($sorted)
-            $worst = $sorted[[Math]::Max(0, [int][Math]::Ceiling($sorted.Count * 0.99) - 1)]   # 99th percentile: the 1 % lows
-            if (-not $NoFpsLog) { Log ("fps avg {0:0.0} min {1:0.0} 1%low {2:0.0} frames {3}" -f (1000 * $ms.Count / $sum), (1000 / $sorted[-1]), (1000 / $worst), $ms.Count) }
-        }
-    } finally { $fs.Dispose() }
+        $v = 0.0
+        if ($f.Count -gt $s.Col -and [double]::TryParse($f[$s.Col], [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$v) -and $v -gt 0) { $ms.Add($v) }
+    }
+    $s.N++
+    if ($ms.Count -gt 0) {
+        $s.Acc.AddRange($ms)
+        $one = 0.0; foreach ($x in $ms) { $one += $x }
+        if ($overlay) { $overlay.Text1.Text = "FPS {0:0}" -f (1000 * $ms.Count / $one) }
+    } elseif ($overlay) { $overlay.Text1.Text = "FPS 0" }
+    if ($s.N % 5 -eq 0 -and $s.Acc.Count -gt 0) {
+        $ms = $s.Acc; $s.Acc = New-Object Collections.Generic.List[double]
+        $sum = 0.0; foreach ($x in $ms) { $sum += $x }
+        $sorted = $ms.ToArray(); [Array]::Sort($sorted)
+        $worst = $sorted[[Math]::Max(0, [int][Math]::Ceiling($sorted.Count * 0.99) - 1)]   # 99th percentile: the 1 % lows
+        if (-not $NoFpsLog) { Log ("fps avg {0:0.0} min {1:0.0} 1%low {2:0.0} frames {3}" -f (1000 * $ms.Count / $sum), (1000 / $sorted[-1]), (1000 / $worst), $ms.Count) }
+    }
 }
 
 $game = Wait-Game
