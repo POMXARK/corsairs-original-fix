@@ -6,6 +6,7 @@ release (version and SHA-256 are pinned below), the game files stay where they a
   powershell -ExecutionPolicy Bypass -File install.ps1                   # find the game, install, fullscreen in the resolution of the desktop
   powershell -ExecutionPolicy Bypass -File install.ps1 -Windowed         # a window instead of fullscreen
   powershell -ExecutionPolicy Bypass -File install.ps1 -GameDir "D:\Games\Корсары" -Width 1920 -Height 1080   # any resolution, also above 1280x1024 that Config.exe lists
+  powershell -ExecutionPolicy Bypass -File install.ps1 -Wasd             # walking in towns on W A S D, as in the new engine
   powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall        # the originals back
 #>
 param(
@@ -13,6 +14,7 @@ param(
     [switch]$Windowed,
     [int]$Width = 0,    # 0 = the resolution of the desktop
     [int]$Height = 0,
+    [switch]$Wasd,      # walking in towns on W A S D (the original: arrows and the mouse)
     [double]$FontScale = 0,   # 0 = Height / 960 (not below 1); 1 leaves the fonts as they are
     [switch]$Uninstall
 )
@@ -46,6 +48,19 @@ function Set-FontScale($path, $k) {
     [IO.File]::WriteAllLines($path, $lines, $enc)
 }
 
+function Set-Walk($path, [bool]$wasd) {
+    # controls.ini: controlN=group,key1,key2,current1,current2; group 1 is the walking in towns: 24 forward, 25 back, 38 left, 39 right
+    # (virtual-key codes: W 87, S 83, A 65, D 68; the second key stays the mouse button / arrow of the original)
+    $enc = [Text.Encoding]::GetEncoding(1251)
+    $new = @{ "control24" = "1,87,1,87,1"; "control25" = "1,83,2,83,2"; "control38" = "1,65,37,65,37"; "control39" = "1,68,39,68,39" }
+    $src = if ($wasd) { $path } else { "$path.orig" }
+    if (-not $wasd -and -not (Test-Path $src)) { return }
+    $lines = [IO.File]::ReadAllLines($src, $enc) | ForEach-Object {
+        if ($wasd -and $_ -match "^(control\d+)=" -and $new.ContainsKey($Matches[1])) { "$($Matches[1])=" + $new[$Matches[1]] } else { $_ }
+    }
+    [IO.File]::WriteAllLines($path, $lines, $enc)
+}
+
 function Set-IniKey($path, $key, $value) {
     # engine.ini is "KEY value" per line (CRLF, cp1251): only the value of the key changes
     $enc = [Text.Encoding]::GetEncoding(1251)
@@ -64,7 +79,7 @@ $dll = Join-Path $GameDir "ddraw.dll"
 if ($Uninstall) {
     $cfg = Join-Path $GameDir "DDrawCompat.ini"
     if (Test-Path $cfg) { Remove-Item $cfg; Write-Host "removed DDrawCompat.ini" }
-    foreach ($p in @($dll, $ini, (Join-Path $GameDir "RESOURCE\INI\fonts.ini"))) {
+    foreach ($p in @($dll, $ini, (Join-Path $GameDir "RESOURCE\INI\fonts.ini"), (Join-Path $GameDir "RESOURCE\INI\controls.ini"))) {
         if (Test-Path "$p.orig") { Move-Item "$p.orig" $p -Force; Write-Host "restored $(Split-Path -Leaf $p)" }
         elseif ($p -eq $dll -and (Test-Path $p)) { Remove-Item $p; Write-Host "removed ddraw.dll" }
     }
@@ -102,4 +117,19 @@ $fonts = Join-Path $GameDir "RESOURCE\INI\fonts.ini"
 Save-Original $fonts
 Set-FontScale $fonts $FontScale
 Write-Host "fonts x$FontScale"
+$ctl = Join-Path $GameDir "RESOURCE\INI\controls.ini"
+Save-Original $ctl
+Set-Walk $ctl ([bool]$Wasd)
+if ($Wasd) { Write-Host "walking: W A S D" }
+# the settings window next to the game (the repository folder can be deleted) and a shortcut on the desktop
+$tools = Join-Path $GameDir "fix"
+if ($Here -ne $tools) {
+    New-Item $tools -ItemType Directory -Force | Out-Null
+    foreach ($n in "install.ps1", "settings.ps1", "settings.cmd", "DDrawCompat.ini") { Copy-Item (Join-Path $Here $n) $tools -Force }
+}
+$lnk = Join-Path ([Environment]::GetFolderPath("CommonDesktopDirectory")) "Корсары - настройки.lnk"
+$sc = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
+$sc.TargetPath = Join-Path $tools "settings.cmd"; $sc.WorkingDirectory = $tools
+$sc.IconLocation = (Join-Path $GameDir "ENGINE.exe") + ",0"; $sc.Save()
+Write-Host "settings: $tools\settings.cmd, shortcut on the desktop"
 Write-Host "done: DDrawCompat $DdVersion, engine.ini BPP 16, $Width x $Height" ($(if ($Windowed) { "windowed" } else { "fullscreen" }))

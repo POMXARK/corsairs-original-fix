@@ -37,6 +37,9 @@ if ($modes -notcontains $desktop) { $modes += $desktop }
 $curW = Get-Key $ini "WINDOW_WIDTH"; $curH = Get-Key $ini "WINDOW_HEIGHT"
 $curMode = Get-Key $ini "WINDOW_MODE"
 $curFont = 1.0
+$curWasd = $false
+$ctlPath = Join-Path $GameDir "RESOURCE\INI\controls.ini"
+if (Test-Path $ctlPath) { $curWasd = [bool]([IO.File]::ReadAllText($ctlPath, [Text.Encoding]::GetEncoding(1251)) -match "(?m)^control24=1,87,") }
 $origFonts = "$fonts.orig"
 if ((Test-Path $fonts) -and (Test-Path $origFonts)) {
     # масштаб = отношение первого числа строки seadogs в текущем и сохранённом fonts.ini
@@ -50,7 +53,7 @@ if ((Test-Path $fonts) -and (Test-Path $origFonts)) {
 $f = New-Object Windows.Forms.Form
 $f.Text = "Установки ""Корсаров"""
 $f.AutoScaleMode = "None"
-$f.ClientSize = New-Object Drawing.Size(422, 214)
+$f.ClientSize = New-Object Drawing.Size(422, 236)
 $f.StartPosition = "CenterScreen"
 $f.FormBorderStyle = "FixedDialog"; $f.MaximizeBox = $false; $f.MinimizeBox = $false
 $f.Font = New-Object Drawing.Font("Tahoma", 8.25)
@@ -61,7 +64,7 @@ function Add-Ctl($parent, $ctl, $x, $y, $w, $h) {
 }
 function New-Text($text) { $l = New-Object Windows.Forms.Label; $l.Text = $text; $l.TextAlign = "MiddleLeft"; return $l }
 
-$g = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 4 316 150 0
+$g = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 4 316 176 0
 $g.Text = "Параметры визуализации"
 $null = Add-Ctl $g (New-Text "Разрешение") 12 26 90 22
 $cbRes = Add-Ctl $g (New-Object Windows.Forms.ComboBox) 110 26 190 22
@@ -79,7 +82,10 @@ $auto = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 184 96 116 22
 $auto.Text = "по экрану"
 $auto.Add_CheckedChanged({ $nud.Enabled = -not $auto.Checked })
 
-$status = Add-Ctl $f (New-Object Windows.Forms.Label) 8 164 316 44 0
+$chWasd = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 130 290 22
+$chWasd.Text = "Ходьба в городе на W A S D"; $chWasd.Checked = $curWasd
+
+$status = Add-Ctl $f (New-Object Windows.Forms.Label) 8 188 316 44 0
 $status.Text = "Игра: $GameDir"
 
 function Apply-Settings([switch]$Launch) {
@@ -87,6 +93,7 @@ function Apply-Settings([switch]$Launch) {
     if ($parts.Count -ne 2 -or -not ($parts[0] -as [int]) -or -not ($parts[1] -as [int])) { $status.Text = "Разрешение вида 1920x1080"; return }
     $psArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $Install, "-GameDir", $GameDir, "-Width", [int]$parts[0], "-Height", [int]$parts[1])
     if (-not $chFull.Checked) { $psArgs += "-Windowed" }
+    if ($chWasd.Checked) { $psArgs += "-Wasd" }
     $psArgs += @("-FontScale", $(if ($auto.Checked) { "0" } else { ([double]$nud.Value).ToString([Globalization.CultureInfo]::InvariantCulture) }))
     $status.Text = "Применяю..."; $f.Refresh()
     $out = & powershell @psArgs 2>&1 | Out-String
