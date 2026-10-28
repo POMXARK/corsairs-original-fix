@@ -366,9 +366,9 @@ function Set-Frame {
         if (-not $script:dumpAt) { $script:dumpAt = (Get-Date).AddSeconds(5) }
         elseif ((Get-Date) -gt $script:dumpAt) { $script:winDumped = $true; foreach ($w in [WinDump]::Of([uint32]$game.Id)) { Log "window dump: $w" }; Log ("cursor " + [Windows.Forms.Cursor]::Position + ", strip " + $script:bar.Bounds) }
     }
-    if (-not $hookLive) { return }   # the logo videos go to GetWindowRect of the window as if it were the client area: it stays at 0,0 until they are over
+    if (-not $hookLive) { return }   # the logo videos go to GetWindowRect of the window as if it were the client area: it stays at 0,0 until they are over; a move before the gameplay frames leaves the picture of DDrawCompat in the corner (run 8)
     if (-not $script:frameAt) { $script:frameAt = Get-Date }
-    if (((Get-Date) - $script:frameAt).TotalSeconds -lt 1) { return }   # the first move waits until DDrawCompat has settled
+    if (((Get-Date) - $script:frameAt).TotalSeconds -lt 0.2) { return }   # the first move waits until DDrawCompat has settled
     $game.Refresh()
     $h = $game.MainWindowHandle
     if ($h -eq [IntPtr]::Zero) { return }
@@ -777,7 +777,7 @@ while (-not $game.HasExited) {
     if ($hookLive -and $windowed) { try { Log-Input } catch { if (-not $script:liErr) { $script:liErr = $true; Log "log-input failed: $($_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)" } } }
     if ($script:cursorFixed -and $tick % 10 -eq 3) { try { $nc = [GameHook]::CursorFix(); if ($nc -or $tick % 100 -eq 3) { Log "cursor fix: changed $nc, $([GameHook]::Dbg)" } } catch { if (-not $script:cfErr) { $script:cfErr = $true; Log "cursor fix failed: $($_.Exception.Message)" } } }
     if ($Cfg.frame -eq 3 -and $windowed -and $focus) { try { $vs = [Windows.Forms.SystemInformation]::VirtualScreen; $cl = New-Object CapNative+RECT; if ([CapNative]::GetClipCursor([ref]$cl) -and ($cl.Right - $cl.Left) -lt $vs.Width) { [void][CapNative]::ClipCursorOff([IntPtr]::Zero); $script:clipFreed++; if ($script:clipFreed -le 5) { Log "cursor clip $($cl.Left),$($cl.Top)-$($cl.Right),$($cl.Bottom) released" } } } catch { } }
-    if ($Cfg.frame -and $windowed -and $tick % 5 -eq 0) { try { Set-Frame } catch { Log "window frame failed: $($_.Exception.Message)" } }
+    if ($Cfg.frame -and $windowed -and ($tick % 5 -eq 0 -or -not $script:placed)) { try { Set-Frame } catch { Log "window frame failed: $($_.Exception.Message)" } }
     if ($hooked) { if ($toastUntil -ne [datetime]::MinValue -and (Get-Date) -gt $toastUntil) { Poke-Text 0x40 60 ""; $msgText = ""; $toastUntil = [datetime]::MinValue } }
     elseif ($toast.Visible) { if ((Get-Date) -gt $toastUntil) { $toast.Hide() } elseif ($tick % 10 -eq 0) { $toast.Raise() } }
     if ($overlay) { if ($tick % 10 -eq 0) { $overlay.Raise() }; if ($tick % 300 -eq 20) { Log ("overlay: " + $overlay.Where([uint32]$game.Id)) } }
