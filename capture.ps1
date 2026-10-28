@@ -18,6 +18,7 @@ param(
     [switch]$NoFpsLog,  # no fps.log lines (the screenshot and video lines stay)
     [switch]$ShowFps,   # the number in the corner of the screen
     [int]$HookMode = 2,   # 2 = the hook; 1 = only the memory and the code, 3 = the hook without stopping the threads (tests)
+    [switch]$NoKeyRepeat,   # no repeats of the held keys from the hook (docs/input-latency.md)
     [switch]$NoHook     # no overlay.bin in the game: the counter and the messages are windows on top (they are seen for a frame only)
 )
 $ErrorActionPreference = "Stop"
@@ -366,6 +367,7 @@ while (-not $game.HasExited) {
         Poke-Text 0x10 48 $fpsText
         Poke-Text 0x40 60 $msgText
         $gx = [Math]::Max(0, [int]($scr.Width - 490)); $gy = [Math]::Max(0, [int]$fpsPos[1] - 200)   # the frame-time graph above the counter
+        [void][GameHook]::Poke(0xA0, [BitConverter]::GetBytes([int]$(if ($focus -and -not $NoKeyRepeat) { 1 } else { 0 })))   # the held keys are repeated while the game is in front
         [void][GameHook]::Poke(0x80, [BitConverter]::GetBytes([int]$(if ($fpsShown) { 1 } else { 0 })) + [BitConverter]::GetBytes($gx) + [BitConverter]::GetBytes($gy))
         Poke-Text 0x400 32 "Framerate %d FPS" -Raw; Poke-Text 0x420 32 "Frametime %d.%d ms" -Raw   # formats of the engine text function (a printf), the numbers come from the hook
         Poke-Text 0x440 32 "1%% low  %d FPS" -Raw; Poke-Text 0x460 32 "0.1%% low %d FPS" -Raw; Poke-Text 0x480 32 "%d ms" -Raw

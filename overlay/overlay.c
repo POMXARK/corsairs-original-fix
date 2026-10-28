@@ -12,6 +12,7 @@
  *   +0x94 TSC of the last frame, +0x98 TSC and +0x9C tick at the start of the calibration
  *   +0x400.. char fmt[4][32] at +0x400, +0x420, +0x440, +0x460 (framerate, frametime, 1% low, 0.1% low) and +0x480 (the scale, ms): formats of the text function, written by capture.ps1
  *   +0x100 unsigned short ring[256]: the frame times in tenths of a millisecond
+ *   +0xA0 key repeat on (0/1, capture.ps1 writes 1 while the game is the window in front); +0x500 unsigned hold[256]: GetTickCount of the key press (0 = up)
  * Build: ./build_overlay.sh  ->  overlay.bin (the code, loaded at 0x7E001000).
  */
 typedef void (__attribute__((cdecl)) *TextFn)(void *font, int x, int y, const char *fmt, ...);
@@ -19,10 +20,15 @@ typedef void (__attribute__((fastcall)) *FlipFn)(void *dev);
 typedef unsigned (__attribute__((thiscall)) *LockFn)(void *dev, int *pitch);   /* FUN_0040b4e0: the pixels of the back buffer, 0 if locked */
 typedef void (__attribute__((fastcall)) *UnlockFn)(void *dev);                  /* FUN_0040b540 */
 typedef unsigned (__attribute__((stdcall)) *TickFn)(void);
+typedef short (__attribute__((stdcall)) *KeyFn)(int vk);                             /* GetAsyncKeyState */
+typedef unsigned (__attribute__((thiscall)) *QueueFn)(void *q, unsigned msg, unsigned wparam, unsigned lparam);   /* FUN_0041eba0: the queue of the input messages of the frame */
 
 #define DATA ((volatile int *)0x7E000000)
 #define RING ((volatile unsigned short *)0x7E000100)
 #define BARS 240                 /* frames in the graph, 2 pixels each */
+#define HOLD ((volatile unsigned *)0x7E000500)
+#define REPEAT_AFTER 150         /* ms of a held key before the first repeat that we send (Windows: 250..1000) */
+#define REPEAT_EVERY 30          /* ms between our repeats */
 #define GRAPH_H 100              /* the height of the graph, its scale follows the worst frame */
 
 static void fill(unsigned short *base, int pitch, int sw, int sh, int x, int y, int w, int h, unsigned short c)
@@ -120,6 +126,23 @@ __attribute__((fastcall)) void hook(void *dev)
                 ((UnlockFn)unlock_addr)(dev);
             }
             py = 0; (void)py;
+        }
+    }
+    if (DATA[0xA0 / 4]) {   /* the game reads the keys from WM_KEYDOWN only (the typematic of Windows: a pause, and only the last key repeats): a key that is held is queued again, as the window procedure 0x417c80 does */
+        volatile unsigned key_iat = 0x4311A0;   /* the import GetAsyncKeyState */
+        volatile unsigned queue_addr = 0x41EBA0;
+        volatile unsigned queue_obj = 0x77DD28;
+        unsigned tick = (*(TickFn *)tick_iat)();
+        int vk;
+        if (!tick) tick = 1;
+        for (vk = 8; vk < 0x5B; vk++) {
+            if (!(vk == 0x20 || (vk >= 0x25 && vk <= 0x28) || (vk >= 0x41 && vk <= 0x5A))) continue;
+            if (!((*(KeyFn *)key_iat)(vk) & 0x8000)) { HOLD[vk] = 0; continue; }
+            if (!HOLD[vk]) { HOLD[vk] = tick; continue; }
+            if (tick - HOLD[vk] >= REPEAT_AFTER) {
+                ((QueueFn)queue_addr)((void *)queue_obj, 0x100, (unsigned)vk, 0x40000001u);   /* WM_KEYDOWN, repeat count 1, bit 30: was down */
+                HOLD[vk] = tick - (REPEAT_AFTER - REPEAT_EVERY);
+            }
         }
     }
     ((FlipFn)flip_addr)(dev);
