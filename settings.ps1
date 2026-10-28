@@ -78,10 +78,13 @@ if (Test-Path $cfgPath) { foreach ($l in [IO.File]::ReadAllLines($cfgPath)) { if
 
 $chFull = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 62 140 20
 $chFull.Text = "Полный экран"; $chFull.Checked = ($curMode -ne "1"); $chFull.Width = 100
-$chFrame = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 116 62 190 20
-$chFrame.Text = "в окне: заголовок, центр"; $chFrame.Checked = [bool]$cfg.frame
-$tip0 = New-Object Windows.Forms.ToolTip; $tip0.SetToolTip($chFrame, "Над окном игры появляется полоса-заголовок (за неё окно перетаскивается), окно ставится по центру экрана. Только при выключенном полном экране; разрешение лучше брать меньше экрана.")
-$chFull.Add_CheckedChanged({ $chFrame.Enabled = -not $chFull.Checked }); $chFrame.Enabled = -not $chFull.Checked
+$frameModes = @("окно в углу, без рамки", "полоса-заголовок, центр", "настоящая рамка, центр")
+$frameVals = @(0, 1, 3)
+$cbFrame = Add-Ctl $g (New-Object Windows.Forms.ComboBox) 116 60 190 22
+$cbFrame.DropDownStyle = "DropDownList"; $cbFrame.Items.AddRange($frameModes)
+$fi = [Array]::IndexOf($frameVals, [int]$cfg.frame); $cbFrame.SelectedIndex = $(if ($fi -ge 0) { $fi } else { 2 })
+$tip0 = New-Object Windows.Forms.ToolTip; $tip0.SetToolTip($cbFrame, "Вид окна при выключенном полном экране. Настоящая рамка: родной заголовок Windows, окно двигается и без фокуса игры. Полоса-заголовок: прежний вариант, полоса над окном. Без рамки: окно в углу экрана, как в оригинале. Разрешение лучше брать меньше экрана.")
+$chFull.Add_CheckedChanged({ $cbFrame.Enabled = -not $chFull.Checked }); $cbFrame.Enabled = -not $chFull.Checked
 
 $null = Add-Ctl $g (New-Text "Размер шрифта") 12 96 96 22
 $nud = Add-Ctl $g (New-Object Windows.Forms.NumericUpDown) 110 96 60 22
@@ -222,7 +225,7 @@ function Save-Cfg {
     $lim = [regex]::Match("$($cbFps.Text)", "\d+").Value
     $cfg.lowlag = [int]$chLow.Checked; $cfg.keyrepeat = [int]$chKeys.Checked; $cfg.finetick = [int]$chFine.Checked
     $cfg.screenshots = [int]$chShot.Checked; $cfg.video = [int]$chVid.Checked; $cfg.fpslog = [int]$chLog.Checked; $cfg.statlog = [int]$chStat.Checked
-    $cfg.osd = [int]$chOsd.Checked; $cfg.fontauto = [int]$auto.Checked; $cfg.frame = $(if ($chFrame.Checked) { 3 } else { 0 }); $cfg.skipintro = [int]$chSkip.Checked; $cfg.fpslimit = $(if ($lim) { [Math]::Min(1000, [int]$lim) } else { 0 })
+    $cfg.osd = [int]$chOsd.Checked; $cfg.fontauto = [int]$auto.Checked; $cfg.frame = $frameVals[[Math]::Max(0, $cbFrame.SelectedIndex)]; $cfg.skipintro = [int]$chSkip.Checked; $cfg.fpslimit = $(if ($lim) { [Math]::Min(1000, [int]$lim) } else { 0 })
     [IO.File]::WriteAllLines($cfgPath, @($cfg.Keys | ForEach-Object { "$_=$($cfg[$_])" }))
 }
 
