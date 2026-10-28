@@ -13,6 +13,7 @@ param(
     [Parameter(Mandatory)][string]$GameDir,
     [switch]$NoVideo,
     [switch]$NoFps,
+    [switch]$NoFpsLog,  # no fps.log lines (the screenshot and video lines stay)
     [switch]$ShowFps    # the number in the corner of the screen
 )
 $ErrorActionPreference = "Stop"
@@ -151,7 +152,7 @@ function Read-Fps($s) {
             $sum = 0.0; foreach ($x in $ms) { $sum += $x }
             $sorted = $ms.ToArray(); [Array]::Sort($sorted)
             $worst = $sorted[[Math]::Max(0, [int][Math]::Ceiling($sorted.Count * 0.99) - 1)]   # 99th percentile: the 1 % lows
-            Log ("fps avg {0:0.0} min {1:0.0} 1%low {2:0.0} frames {3}" -f (1000 * $ms.Count / $sum), (1000 / $sorted[-1]), (1000 / $worst), $ms.Count)
+            if (-not $NoFpsLog) { Log ("fps avg {0:0.0} min {1:0.0} 1%low {2:0.0} frames {3}" -f (1000 * $ms.Count / $sum), (1000 / $sorted[-1]), (1000 / $worst), $ms.Count) }
         }
     } finally { $fs.Dispose() }
 }
@@ -159,7 +160,7 @@ function Read-Fps($s) {
 $game = Wait-Game
 Log "game started (pid $($game.Id)); F8 screenshot, F9 video, fps every 5 s, on screen: $ShowFps"
 $fps = $null
-if (-not $NoFps) {
+if (-not $NoFps -and ($ShowFps -or -not $NoFpsLog)) {
     try { $fps = Start-Fps $game } catch { Log "fps: PresentMon did not start: $($_.Exception.Message)" }
 }
 $overlay = $null

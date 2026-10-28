@@ -53,7 +53,7 @@ if ((Test-Path $fonts) -and (Test-Path $origFonts)) {
 $f = New-Object Windows.Forms.Form
 $f.Text = "Установки ""Корсаров"""
 $f.AutoScaleMode = "None"
-$f.ClientSize = New-Object Drawing.Size(422, 284)
+$f.ClientSize = New-Object Drawing.Size(422, 308)
 $f.StartPosition = "CenterScreen"
 $f.FormBorderStyle = "FixedDialog"; $f.MaximizeBox = $false; $f.MinimizeBox = $false
 $f.Font = New-Object Drawing.Font("Tahoma", 8.25)
@@ -64,7 +64,7 @@ function Add-Ctl($parent, $ctl, $x, $y, $w, $h) {
 }
 function New-Text($text) { $l = New-Object Windows.Forms.Label; $l.Text = $text; $l.TextAlign = "MiddleLeft"; return $l }
 
-$g = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 4 316 224 0
+$g = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 4 316 248 0
 $g.Text = "Параметры визуализации"
 $null = Add-Ctl $g (New-Text "Разрешение") 12 26 90 22
 $cbRes = Add-Ctl $g (New-Object Windows.Forms.ComboBox) 110 26 190 22
@@ -86,11 +86,13 @@ $chWasd = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 126 290 22
 $chWasd.Text = "Ходьба в городе на W A S D"; $chWasd.Checked = $curWasd
 
 $chCap = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 150 300 22
-$chCap.Text = "F8 снимок, F9 запись, FPS в лог"; $chCap.Checked = $true
-$chOsd = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 174 300 22
+$chCap.Text = "F8 снимок, F9 запись"; $chCap.Checked = $true
+$chLog = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 174 300 22
+$chLog.Text = "Писать FPS в лог"; $chLog.Checked = $true
+$chOsd = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 198 300 22
 $chOsd.Text = "Показывать FPS на экране"; $chOsd.Checked = $true
 
-$status = Add-Ctl $f (New-Object Windows.Forms.Label) 8 236 316 44 0
+$status = Add-Ctl $f (New-Object Windows.Forms.Label) 8 260 316 44 0
 $status.Text = "Игра: $GameDir"
 
 function Apply-Settings([switch]$Launch) {
@@ -107,6 +109,7 @@ function Apply-Settings([switch]$Launch) {
     if ($Launch) {
         if ($chCap.Checked) {
             $capArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $Here "capture.ps1"), "-GameDir", "`"$GameDir`"")
+            if (-not $chLog.Checked) { $capArgs += "-NoFpsLog" }
             if ($chOsd.Checked) { $capArgs += "-ShowFps" }
             Start-Process powershell -WindowStyle Hidden -ArgumentList $capArgs
         }
