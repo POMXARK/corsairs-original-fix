@@ -1,4 +1,4 @@
-<#
+﻿<#
 Fixes the original «Корсары» (Sea Dogs, 2000, ENGINE.exe) on Windows 10/11: wraps its DirectDraw into Direct3D with
 DDrawCompat and sets engine.ini and DDrawCompat.ini (16-bit colour kept). Nothing of the game is stored here: the wrapper is downloaded from its official
 release (version and SHA-256 are pinned below), the game files stay where they are; every file that is changed is saved as <name>.orig.
@@ -13,6 +13,7 @@ param(
     [switch]$Windowed,
     [int]$Width = 0,    # 0 = the resolution of the desktop
     [int]$Height = 0,
+    [double]$FontScale = 0,   # 0 = Height / 960 (not below 1); 1 leaves the fonts as they are
     [switch]$Uninstall
 )
 $ErrorActionPreference = "Stop"
@@ -35,6 +36,16 @@ function Save-Original($path) {
     if ((Test-Path $path) -and -not (Test-Path "$path.orig")) { Copy-Item $path "$path.orig" }
 }
 
+function Set-FontScale($path, $k) {
+    # fonts.ini: "name = scale,weight,italic,face" in [english]/[russian]; the scale is taken from the saved original
+    $enc = [Text.Encoding]::GetEncoding(1251)
+    $inv = [Globalization.CultureInfo]::InvariantCulture
+    $lines = [IO.File]::ReadAllLines("$path.orig", $enc) | ForEach-Object {
+        if ($_ -match '^(\w+\s*=\s*)([0-9.]+)(,.*)$') { $Matches[1] + ([double]::Parse($Matches[2], $inv) * $k).ToString("0.00", $inv) + $Matches[3] } else { $_ }
+    }
+    [IO.File]::WriteAllLines($path, $lines, $enc)
+}
+
 function Set-IniKey($path, $key, $value) {
     # engine.ini is "KEY value" per line (CRLF, cp1251): only the value of the key changes
     $enc = [Text.Encoding]::GetEncoding(1251)
@@ -53,7 +64,7 @@ $dll = Join-Path $GameDir "ddraw.dll"
 if ($Uninstall) {
     $cfg = Join-Path $GameDir "DDrawCompat.ini"
     if (Test-Path $cfg) { Remove-Item $cfg; Write-Host "removed DDrawCompat.ini" }
-    foreach ($p in @($dll, $ini)) {
+    foreach ($p in @($dll, $ini, (Join-Path $GameDir "RESOURCE\INI\fonts.ini"))) {
         if (Test-Path "$p.orig") { Move-Item "$p.orig" $p -Force; Write-Host "restored $(Split-Path -Leaf $p)" }
         elseif ($p -eq $dll -and (Test-Path $p)) { Remove-Item $p; Write-Host "removed ddraw.dll" }
     }
@@ -70,8 +81,10 @@ $tmp = Join-Path $env:TEMP "DDrawCompat_$DdVersion"
 if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
 Expand-Archive $zip $tmp
 
-Save-Original $dll
-Copy-Item (Join-Path $tmp "ddraw.dll") $dll -Force
+$new = Join-Path $tmp "ddraw.dll"
+# an already installed DDrawCompat is not an original
+if (-not (Test-Path $dll) -or (Get-FileHash $dll).Hash -ne (Get-FileHash $new).Hash) { Save-Original $dll }
+Copy-Item $new $dll -Force
 Copy-Item (Join-Path $Here "DDrawCompat.ini") (Join-Path $GameDir "DDrawCompat.ini") -Force
 
 if (-not $Width -or -not $Height) {
@@ -84,4 +97,9 @@ Set-IniKey $ini "BPP" 16   # the game is 16-bit; DDrawCompat.ini (DesktopColorDe
 Set-IniKey $ini "WINDOW_WIDTH" $Width
 Set-IniKey $ini "WINDOW_HEIGHT" $Height
 Set-IniKey $ini "WINDOW_MODE" ($(if ($Windowed) { 1 } else { 0 }))
+if (-not $FontScale) { $FontScale = [Math]::Max(1.0, [Math]::Floor($Height / 96.0 + 0.5) / 10.0) }
+$fonts = Join-Path $GameDir "RESOURCE\INI\fonts.ini"
+Save-Original $fonts
+Set-FontScale $fonts $FontScale
+Write-Host "fonts x$FontScale"
 Write-Host "done: DDrawCompat $DdVersion, engine.ini BPP 16, $Width x $Height" ($(if ($Windowed) { "windowed" } else { "fullscreen" }))
