@@ -121,15 +121,15 @@ public static class GameHook {
         launchThread = pi.hThread; CloseHandle(pi.hProcess); return pi.pid;
     }
     public static void Resume() { if (launchThread != IntPtr.Zero) { ResumeThread(launchThread); CloseHandle(launchThread); launchThread = IntPtr.Zero; } }
-    // call [0x431194] at 0x417BD8 (CreateWindowExA of the window of the game) -> call create_fix (overlay.c)
-    public static bool PatchCreate() {
-        const int At = 0x417BD8; byte[] b = new byte[6]; int n; uint old;
-        if (proc == IntPtr.Zero || !ReadProcessMemory(proc, (IntPtr)At, b, 6, out n) || b[0] != 0xFF || b[1] != 0x15 || BitConverter.ToInt32(b, 2) != 0x431194) return false;
-        byte[] p = new byte[6]; p[0] = 0xE8; Array.Copy(BitConverter.GetBytes(Code + 0x4000 - (At + 5)), 0, p, 1, 4); p[5] = 0x90;
-        VirtualProtectEx(proc, (IntPtr)At, (UIntPtr)6, 0x40, out old);
-        bool ok = WriteProcessMemory(proc, (IntPtr)At, p, 6, out n);
-        VirtualProtectEx(proc, (IntPtr)At, (UIntPtr)6, old, out old);
-        FlushInstructionCache(proc, (IntPtr)At, (UIntPtr)6);
+    // call [slot] at the site (CreateWindowExA of the window of the game 0x417BD8, slot 0x431194 -> create_fix; GetWindowRect of the logo videos 0x417FE4, slot 0x4311A4 -> rect_fix)
+    public static bool PatchCall(int at, int slot, int to) {
+        byte[] b = new byte[6]; int n; uint old;
+        if (proc == IntPtr.Zero || !ReadProcessMemory(proc, (IntPtr)at, b, 6, out n) || b[0] != 0xFF || b[1] != 0x15 || BitConverter.ToInt32(b, 2) != slot) return false;
+        byte[] p = new byte[6]; p[0] = 0xE8; Array.Copy(BitConverter.GetBytes(Code + to - (at + 5)), 0, p, 1, 4); p[5] = 0x90;
+        VirtualProtectEx(proc, (IntPtr)at, (UIntPtr)6, 0x40, out old);
+        bool ok = WriteProcessMemory(proc, (IntPtr)at, p, 6, out n);
+        VirtualProtectEx(proc, (IntPtr)at, (UIntPtr)6, old, out old);
+        FlushInstructionCache(proc, (IntPtr)at, (UIntPtr)6);
         return ok;
     }
     public static string Install(int pid, byte[] code, int mode) {
@@ -141,7 +141,7 @@ public static class GameHook {
         int now = BitConverter.ToInt32(site, 1);
         if (now == want) return "";   // already hooked
         if (now != unchecked((int)0xFFFE9691)) return "ENGINE.exe is not the expected one at the flip";
-        IntPtr mem = VirtualAllocEx(proc, (IntPtr)Data, (UIntPtr)0x6000, 0x3000, 0x40);
+        IntPtr mem = VirtualAllocEx(proc, (IntPtr)Data, (UIntPtr)0x8000, 0x3000, 0x40);
         if (mem != (IntPtr)Data) return "no room at 0x7E000000";
         if (!WriteProcessMemory(proc, (IntPtr)Code, code, code.Length, out n)) return "code not written";
         if (mode == 1) return "";   // memory and code only, the call is not patched (a test)
@@ -741,7 +741,7 @@ if (-not $NoHook -and (Test-Path $binFile)) {
             [void][GameHook]::Poke(0x900, ($ints | % { [BitConverter]::GetBytes([int]$_) } | % { $_ }))
             [void][GameHook]::Poke(0xC8, [BitConverter]::GetBytes([int]$cx) + [BitConverter]::GetBytes([int]$cy))
             [void][GameHook]::Poke(0x910, [BitConverter]::GetBytes([int]1) + [BitConverter]::GetBytes([int]0x00CA0000))
-            $okc = [GameHook]::PatchCreate(); Log "create window fix: $okc, client at $cx,$cy, frame $($ints -join ',')"
+            $okc = [GameHook]::PatchCall(0x417BD8, 0x431194, 0x4000); $okr = [GameHook]::PatchCall(0x417FE4, 0x4311A4, 0x5000); Log "create window fix: $okc, video rect fix: $okr, client at $cx,$cy, frame $($ints -join ',')"
         }
     }
 }
@@ -776,6 +776,24 @@ if ($ShowFps -and -not $hooked) { $overlay = New-Object FpsOverlay($Osd.x, $Osd.
 # autotest=1 in fix.ini: no hands needed. 20 s after the hook is live: a screenshot, the cursor over two buttons, two more, the hashes of the window area
 # are compared (a live picture has a changing FPS counter), the result goes to the log, the pictures to Documents\My Games\Sea Dogs\auto, the game is closed
 $script:autoAt = $null; $script:autoStep = 0
+# autotest=6 (skipintro=0): Esc by hand in the logo video -> screenshots 3, 5, 7, 10, 14 s after the start of the game (the black screen after Esc)
+$script:introT0 = Get-Date; $script:introDone = @{}
+function Intro-Test {
+    $t = ((Get-Date) - $script:introT0).TotalSeconds; $dir = Join-Path $Stash "auto"
+    if (-not $script:introDone.ContainsKey("d")) { $script:introDone["d"] = 1; New-Item $dir -ItemType Directory -Force | Out-Null; Remove-Item "$dir\*" -Force }
+    foreach ($s in 3, 8, 14, 20, 30) {
+        if ($t -gt $s -and -not $script:introDone.ContainsKey("s$s")) {
+            $script:introDone["s$s"] = 1; $b = [Windows.Forms.Screen]::PrimaryScreen.Bounds; $bm = New-Object Drawing.Bitmap $b.Width, $b.Height; $g = [Drawing.Graphics]::FromImage($bm)
+            $g.CopyFromScreen($b.Location, [Drawing.Point]::Empty, $b.Size); $g.Dispose(); $bm.Save((Join-Path $dir "i_${s}s.png")); $bm.Dispose()
+            Log "intro test: shot ${s}s, intro flag $([GameHook]::PeekAbs(0x9A3DDC)), frames $([GameHook]::Peek(0x7C))"
+        }
+    }
+    if ($t -gt 4 -and -not $script:introDone.ContainsKey("esc")) {
+        $script:introDone["esc"] = 1; $h = $game.MainWindowHandle
+        [void][CapNative]::PostMessage($h, 0x100, [IntPtr]0x1B, [IntPtr]0x00010001); [void][CapNative]::PostMessage($h, 0x101, [IntPtr]0x1B, [IntPtr]0xC0010001); Log "intro test: Esc"
+    }
+    if ($t -gt 32) { Log "intro test: done"; $script:introDone["esc"] = 2; [void][CapNative]::PostMessage($game.MainWindowHandle, 0x10, [IntPtr]0, [IntPtr]0); $script:introT0 = [DateTime]::MaxValue }
+}
 function Auto-Step {
     if (-not $script:autoAt) { $script:autoAt = Get-Date }
     $t = ((Get-Date) - $script:autoAt).TotalSeconds; $dir = Join-Path $Stash "auto"
@@ -823,7 +841,8 @@ while (-not $game.HasExited) {
     $f8 = $d8; $f9 = $d9; $f10 = $d10; $f11 = $d11
     [Windows.Forms.Application]::DoEvents()
     if ($Cfg.skipintro -and $tick % 2 -eq 0) { try { Skip-Intro } catch { } }
-    if ($Cfg.autotest -and $hookLive) { try { Auto-Step } catch { Log "autotest failed: $($_.Exception.Message)" } }
+    if ($Cfg.autotest -eq 6) { try { Intro-Test } catch { Log "intro test failed: $($_.Exception.Message)" } }
+    elseif ($Cfg.autotest -and $hookLive) { try { Auto-Step } catch { Log "autotest failed: $($_.Exception.Message)" } }
     if ($hookLive -and $windowed) { try { Log-Input } catch { if (-not $script:liErr) { $script:liErr = $true; Log "log-input failed: $($_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)" } } }
     if ($script:cursorFixed -and $tick % 10 -eq 3) { try { $nc = [GameHook]::CursorFix(); if ($nc -or $tick % 100 -eq 3) { Log "cursor fix: changed $nc, $([GameHook]::Dbg)" } } catch { if (-not $script:cfErr) { $script:cfErr = $true; Log "cursor fix failed: $($_.Exception.Message)" } } }
     if ($Cfg.frame -eq 3 -and $windowed -and $focus) { try { $vs = [Windows.Forms.SystemInformation]::VirtualScreen; $cl = New-Object CapNative+RECT; if ([CapNative]::GetClipCursor([ref]$cl) -and ($cl.Right - $cl.Left) -lt $vs.Width) { [void][CapNative]::ClipCursorOff([IntPtr]::Zero); $script:clipFreed++; if ($script:clipFreed -le 5) { Log "cursor clip $($cl.Left),$($cl.Top)-$($cl.Right),$($cl.Bottom) released" } } } catch { } }

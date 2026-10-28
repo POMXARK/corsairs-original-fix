@@ -17,6 +17,7 @@
  *   +0xD8 the real Blt (slot 0x14 of the vtable of the primary surface), blt_fix = code+0x1000 (capture.ps1 points the slot at it in a moved window)
  *   +0x900/+0x904 the client area from the outer corner of the window with a real frame (frame=3), +0x908/+0x90C the width/height the frame adds: move_fix and the move of hook() put the outer rectangle so that the client area is the size of the game
  *   +0x910 1 = create_fix (code+0x4000, the call 0x417BD8 of CreateWindowExA) makes the window with the style +0x914 at the client origin +0xC8/+0xCC
+ *   rect_fix = code+0x5000 (the call 0x417FE4 of GetWindowRect for the logo videos)
  *   +0xF8 the real GetCursorPos, cursor_get = code+0x2000 (capture.ps1 points the import of GetCursorPos of the loaded modules of the game at it in a moved window)
  *   +0xF4 frame limit N fps (0 = none): hook() waits until 1/N s have passed since the previous frame (DDrawCompat's FpsLimiter does not touch a window that is drawn with Blt)
  *   +0xA0 key repeat on (0/1, capture.ps1 writes 1 while the game is the window in front); +0x500 unsigned hold[256]: GetTickCount of the key press (0 = up)
@@ -251,4 +252,16 @@ __attribute__((stdcall, aligned(4096))) void *create_fix(int ex, const char *cls
         w += DATA[0x908 / 4]; h += DATA[0x90C / 4];
     }
     return ((void *(__attribute__((stdcall)) *)(int, const char *, const char *, unsigned, int, int, int, int, void *, void *, void *, void *))*(void *volatile *)0x431194)(ex, cls, name, style, x, y, w, h, parent, menu, inst, param);
+}
+
+/* GetWindowRect(hwnd, &rect) of the logo videos (the call at 0x417FE4 in FUN_00417f30, slot 0x4311A4): the game takes the window rectangle for the area of the video in the window, as if it stood at 0,0.
+ * With a frame (+0x910) the video is put at 0,0 and its size is the client area: else it is drawn outside the window (a black picture). */
+__attribute__((stdcall, aligned(4096))) int rect_fix(void *h, int *r)
+{
+    int ok = ((int (__attribute__((stdcall)) *)(void *, int *))*(void *volatile *)0x4311A4)(h, r);
+    if (ok && DATA[0x910 / 4]) {
+        int w = r[2] - r[0] - DATA[0x908 / 4], ht = r[3] - r[1] - DATA[0x90C / 4];
+        r[0] = 0; r[1] = 0; r[2] = w; r[3] = ht;
+    }
+    return ok;
 }

@@ -8,6 +8,7 @@ if llvm-objdump -r /tmp/overlay.o | grep -q "R_386_"; then echo "relocations in 
 [ "$(llvm-nm /tmp/overlay.o | awk '$3=="cursor_fix"{print $1}')" = 00000080 ] || { echo "cursor_fix must be at 0x80"; exit 1; }
 [ "$(llvm-nm /tmp/overlay.o | awk '$3=="move_fix"{print $1}')" = 00003000 ] || { echo "move_fix must be at 0x3000"; exit 1; }
 [ "$(llvm-nm /tmp/overlay.o | awk '$3=="create_fix"{print $1}')" = 00004000 ] || { echo "create_fix must be at 0x4000"; exit 1; }
+[ "$(llvm-nm /tmp/overlay.o | awk '$3=="rect_fix"{print $1}')" = 00005000 ] || { echo "rect_fix must be at 0x5000"; exit 1; }
 [ "$(llvm-nm /tmp/overlay.o | awk '$3=="blt_fix"{print $1}')" = 00001000 ] || { echo "blt_fix must be at 0x1000"; exit 1; }
 [ "$(llvm-nm /tmp/overlay.o | awk '$3=="cursor_get"{print $1}')" = 00002000 ] || { echo "cursor_get must be at 0x2000"; exit 1; }
 llvm-objcopy -O binary --only-section=.text /tmp/overlay.o overlay.bin
