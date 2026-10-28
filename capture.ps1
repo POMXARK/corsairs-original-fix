@@ -4,7 +4,7 @@ Runs next to the game and ends with it (play.cmd starts both):
 
   F8   a screenshot to Documents\My Games\Sea Dogs\Screenshots\<date>.jpg
   F9   a video to Screenshots\<date>.mp4 (ffmpeg, the desktop 30 fps, no sound); F9 again ends it
-  FPS  every 5 s a line of Documents\My Games\Sea Dogs\Logs\fps.log (PresentMon, the frames that DDrawCompat presents)
+  FPS  (-ShowFps: the number in the top left corner, as show_fps of the new engine) every 5 s a line of Documents\My Games\Sea Dogs\Logs\fps.log (PresentMon, the frames that DDrawCompat presents)
 
 PresentMon (MIT) and ffmpeg (GPL, a build of gyan.dev) are downloaded once to <game>\fix\tools, the versions and
 SHA-256 are pinned below. PresentMon watches the process through ETW and needs the rights of an administrator.
@@ -12,7 +12,8 @@ SHA-256 are pinned below. PresentMon watches the process through ETW and needs t
 param(
     [Parameter(Mandatory)][string]$GameDir,
     [switch]$NoVideo,
-    [switch]$NoFps
+    [switch]$NoFps,
+    [switch]$ShowFps    # the number in the corner of the screen
 )
 $ErrorActionPreference = "Stop"
 $PmUrl = "https://github.com/GameTechDev/PresentMon/releases/download/v2.6.0/PresentMon-2.6.0-x64.exe"
@@ -33,6 +34,22 @@ public static class CapNative {
     [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+}
+"@
+
+Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing @"
+using System; using System.Drawing; using System.Windows.Forms;
+// a window on top of the game that the mouse and the keys pass through and that never takes the focus
+public class FpsOverlay : Form {
+    public Label Text1 = new Label();
+    public FpsOverlay() {
+        FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; TopMost = true; StartPosition = FormStartPosition.Manual;
+        Location = new Point(8, 8); Size = new Size(150, 30); BackColor = Color.Black; Opacity = 0.65;
+        Text1.ForeColor = Color.Lime; Text1.Font = new Font("Consolas", 14, FontStyle.Bold); Text1.Dock = DockStyle.Fill; Text1.Text = "FPS --";
+        Controls.Add(Text1);
+    }
+    protected override bool ShowWithoutActivation { get { return true; } }
+    protected override CreateParams CreateParams { get { var p = base.CreateParams; p.ExStyle |= 0x80 | 0x20 | 0x08000000 | 0x80000; return p; } } // toolwindow, transparent to input, no activate, layered
 }
 "@
 
@@ -100,7 +117,7 @@ function Start-Fps($game) {
     $psi = New-Object Diagnostics.ProcessStartInfo (Get-PresentMon)
     $psi.Arguments = "--process_id $($game.Id) --output_file `"$csv`" --stop_existing_session --terminate_on_proc_exit --no_console_stats"
     $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
-    return @{ Proc = [Diagnostics.Process]::Start($psi); Csv = $csv; Pos = 0L; Col = -1 }
+    return @{ Proc = [Diagnostics.Process]::Start($psi); Csv = $csv; Pos = 0L; Col = -1; Acc = (New-Object Collections.Generic.List[double]); N = 0 }
 }
 
 function Read-Fps($s) {
@@ -123,7 +140,14 @@ function Read-Fps($s) {
             if ($f.Count -gt $s.Col -and [double]::TryParse($f[$s.Col], [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$v) -and $v -gt 0) { $ms.Add($v) }
             $s.Pos += [Text.Encoding]::UTF8.GetByteCount($line) + 2
         }
+        $s.N++
         if ($ms.Count -gt 0) {
+            $s.Acc.AddRange($ms)
+            $one = 0.0; foreach ($x in $ms) { $one += $x }
+            if ($overlay) { $overlay.Text1.Text = "FPS {0:0}" -f (1000 * $ms.Count / $one) }
+        } elseif ($overlay) { $overlay.Text1.Text = "FPS 0" }
+        if ($s.N % 5 -eq 0 -and $s.Acc.Count -gt 0) {
+            $ms = $s.Acc; $s.Acc = New-Object Collections.Generic.List[double]
             $sum = 0.0; foreach ($x in $ms) { $sum += $x }
             $sorted = $ms.ToArray(); [Array]::Sort($sorted)
             $worst = $sorted[[Math]::Max(0, [int][Math]::Ceiling($sorted.Count * 0.99) - 1)]   # 99th percentile: the 1 % lows
@@ -133,11 +157,13 @@ function Read-Fps($s) {
 }
 
 $game = Wait-Game
-Log "game started (pid $($game.Id)); F8 screenshot, F9 video, fps every 5 s"
+Log "game started (pid $($game.Id)); F8 screenshot, F9 video, fps every 5 s, on screen: $ShowFps"
 $fps = $null
 if (-not $NoFps) {
     try { $fps = Start-Fps $game } catch { Log "fps: PresentMon did not start: $($_.Exception.Message)" }
 }
+$overlay = $null
+if ($ShowFps) { $overlay = New-Object FpsOverlay; $overlay.Show() }
 $video = $null; $f8 = $false; $f9 = $false; $tick = 0
 while (-not $game.HasExited) {
     Start-Sleep -Milliseconds 100
@@ -158,8 +184,10 @@ while (-not $game.HasExited) {
         } catch { Log "video failed: $($_.Exception.Message)" }
     }
     $f8 = $d8; $f9 = $d9
-    if ($fps -and $tick % 50 -eq 0) { try { Read-Fps $fps } catch { Log "fps: $($_.Exception.Message)" } }
+    if ($overlay) { [Windows.Forms.Application]::DoEvents() }
+    if ($fps -and $tick % 10 -eq 0) { try { Read-Fps $fps } catch { Log "fps: $($_.Exception.Message)" } }
 }
 Stop-Video $video
+if ($overlay) { $overlay.Close() }
 if ($fps -and -not $fps.Proc.HasExited) { $fps.Proc.Kill() }
 Log "game ended"
