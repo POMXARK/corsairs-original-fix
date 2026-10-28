@@ -3,16 +3,16 @@ Fixes the original «Корсары» (Sea Dogs, 2000, ENGINE.exe) on Windows 10
 DDrawCompat and sets engine.ini and DDrawCompat.ini (16-bit colour kept). Nothing of the game is stored here: the wrapper is downloaded from its official
 release (version and SHA-256 are pinned below), the game files stay where they are; every file that is changed is saved as <name>.orig.
 
-  powershell -ExecutionPolicy Bypass -File install.ps1                   # find the game, install, fullscreen 1280x960
+  powershell -ExecutionPolicy Bypass -File install.ps1                   # find the game, install, fullscreen in the resolution of the desktop
   powershell -ExecutionPolicy Bypass -File install.ps1 -Windowed         # a window instead of fullscreen
-  powershell -ExecutionPolicy Bypass -File install.ps1 -GameDir "D:\Games\Корсары" -Width 1600 -Height 1200
+  powershell -ExecutionPolicy Bypass -File install.ps1 -GameDir "D:\Games\Корсары" -Width 1920 -Height 1080   # any resolution, also above 1280x1024 that Config.exe lists
   powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall        # the originals back
 #>
 param(
     [string]$GameDir,
     [switch]$Windowed,
-    [int]$Width = 1280,
-    [int]$Height = 960,
+    [int]$Width = 0,    # 0 = the resolution of the desktop
+    [int]$Height = 0,
     [switch]$Uninstall
 )
 $ErrorActionPreference = "Stop"
@@ -74,6 +74,11 @@ Save-Original $dll
 Copy-Item (Join-Path $tmp "ddraw.dll") $dll -Force
 Copy-Item (Join-Path $Here "DDrawCompat.ini") (Join-Path $GameDir "DDrawCompat.ini") -Force
 
+if (-not $Width -or -not $Height) {
+    $v = Get-CimInstance Win32_VideoController | Where-Object { $_.CurrentHorizontalResolution } | Select-Object -First 1
+    $Width = if ($v) { [int]$v.CurrentHorizontalResolution } else { 1280 }
+    $Height = if ($v) { [int]$v.CurrentVerticalResolution } else { 960 }
+}
 Save-Original $ini
 Set-IniKey $ini "BPP" 16   # the game is 16-bit; DDrawCompat.ini (DesktopColorDepth=16) keeps it so on a 32-bit desktop
 Set-IniKey $ini "WINDOW_WIDTH" $Width
