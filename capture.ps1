@@ -51,6 +51,9 @@ public class FpsOverlay : Form {
         Text1.ForeColor = Color.Lime; Text1.Font = new Font("Consolas", size, FontStyle.Bold, GraphicsUnit.Pixel); Text1.TextAlign = ContentAlignment.MiddleCenter; Text1.Dock = DockStyle.Fill; Text1.Text = "FPS --";
         Controls.Add(Text1);
     }
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] static extern IntPtr SetWindowLongPtr(IntPtr h, int i, IntPtr v);
+    // an owned window stays over its owner whatever the owner does with the topmost layer (the game puts itself on top again and again)
+    public void OwnBy(IntPtr owner) { SetWindowLongPtr(Handle, -8, owner); }
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
     // the window of the game can come up after this one and cover it: put it on top again (topmost, no move, no size, no activate, show)
     public void Raise() { SetWindowPos(Handle, (IntPtr)(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0040); }
@@ -87,6 +90,9 @@ public class Toast : Form {
         Text1.Font = new Font("Segoe UI", 18, FontStyle.Bold, GraphicsUnit.Pixel); Text1.TextAlign = ContentAlignment.MiddleCenter; Text1.Dock = DockStyle.Fill;
         Controls.Add(Text1);
     }
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] static extern IntPtr SetWindowLongPtr(IntPtr h, int i, IntPtr v);
+    // an owned window stays over its owner whatever the owner does with the topmost layer (the game puts itself on top again and again)
+    public void OwnBy(IntPtr owner) { SetWindowLongPtr(Handle, -8, owner); }
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
     public void Raise() { SetWindowPos(Handle, (IntPtr)(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0040); }
     protected override bool ShowWithoutActivation { get { return true; } }
@@ -206,6 +212,7 @@ if (-not $NoFps -and ($ShowFps -or -not $NoFpsLog)) {
     try { $fps = Start-Fps $game } catch { Log "fps: PresentMon did not start: $($_.Exception.Message)" }
 }
 $overlay = $null
+$ownerH = [IntPtr]::Zero
 $toast = New-Object Toast
 $toastUntil = [datetime]::MinValue
 function Notify($text, $color, $seconds) {
@@ -236,6 +243,15 @@ while (-not $game.HasExited) {
     }
     $f8 = $d8; $f9 = $d9
     [Windows.Forms.Application]::DoEvents()
+    if ($tick % 10 -eq 1) {
+        $game.Refresh()
+        $mw = $game.MainWindowHandle
+        if ($mw -ne [IntPtr]::Zero -and $mw -ne $ownerH) {
+            $ownerH = $mw
+            $toast.OwnBy($mw); if ($overlay) { $overlay.OwnBy($mw) }
+            Log "overlay windows owned by the game window $mw"
+        }
+    }
     if ($toast.Visible) { if ((Get-Date) -gt $toastUntil) { $toast.Hide() } elseif ($tick % 10 -eq 0) { $toast.Raise() } }
     if ($overlay) { if ($tick % 10 -eq 0) { $overlay.Raise() }; if ($tick % 300 -eq 20) { Log ("overlay: " + $overlay.Where([uint32]$game.Id)) } }
     if ($fps -and $tick % 10 -eq 0) { try { Read-Fps $fps } catch { Log "fps: $($_.Exception.Message)" } }
