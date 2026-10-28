@@ -6,5 +6,5 @@ if %errorlevel% neq 0 (
   exit /b
 )
 cd /d "%~dp0.."
-start "" powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0capture.ps1" -GameDir "%CD%" -ShowFps
+start "" powershell -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File "%~dp0capture.ps1" -GameDir "%CD%" -ShowFps
 start "" /d "%CD%" ENGINE.exe

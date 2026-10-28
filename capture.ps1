@@ -49,6 +49,9 @@ public class FpsOverlay : Form {
         Text1.ForeColor = Color.Lime; Text1.Font = new Font("Consolas", 14, FontStyle.Bold); Text1.Dock = DockStyle.Fill; Text1.Text = "FPS --";
         Controls.Add(Text1);
     }
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    // the window of the game can come up after this one and cover it: put it on top again (topmost, no move, no size, no activate, show)
+    public void Raise() { SetWindowPos(Handle, (IntPtr)(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0040); }
     protected override bool ShowWithoutActivation { get { return true; } }
     protected override CreateParams CreateParams { get { var p = base.CreateParams; p.ExStyle |= 0x80 | 0x20 | 0x08000000 | 0x80000; return p; } } // toolwindow, transparent to input, no activate, layered
 }
@@ -178,7 +181,7 @@ while (-not $game.HasExited) {
         } catch { Log "video failed: $($_.Exception.Message)" }
     }
     $f8 = $d8; $f9 = $d9
-    if ($overlay) { [Windows.Forms.Application]::DoEvents() }
+    if ($overlay) { [Windows.Forms.Application]::DoEvents(); if ($tick % 10 -eq 0) { $overlay.Raise() } }
     if ($fps -and $tick % 10 -eq 0) { try { Read-Fps $fps } catch { Log "fps: $($_.Exception.Message)" } }
 }
 Stop-Video $video

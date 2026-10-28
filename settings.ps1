@@ -108,7 +108,7 @@ function Apply-Settings([switch]$Launch) {
     $status.Text = "Сохранено: $($cbRes.Text), шрифт ×$(if ($auto.Checked) { 'авто' } else { $nud.Value })"
     if ($Launch) {
         if ($chCap.Checked) {
-            $capArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$(Join-Path $Here "capture.ps1")`"", "-GameDir", "`"$GameDir`"")
+            $capArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-STA", "-File", "`"$(Join-Path $Here "capture.ps1")`"", "-GameDir", "`"$GameDir`"")
             if (-not $chLog.Checked) { $capArgs += "-NoFpsLog" }
             if ($chOsd.Checked) { $capArgs += "-ShowFps" }
             Start-Process powershell -WindowStyle Hidden -ArgumentList $capArgs
