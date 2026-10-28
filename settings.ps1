@@ -234,7 +234,7 @@ function Apply-Settings([switch]$Launch) {
     if ($LASTEXITCODE -ne 0 -and $out -match "(?i)error|ошибк|exception") { $status.Text = "Ошибка: " + $out.Trim().Split("`n")[-1]; return $false }
     $status.Text = "Сохранено: $($cbRes.Text), шрифт ×$(if ($auto.Checked) { 'авто' } else { $nud.Value })"
     if ($Launch) {
-        Start-Process (Join-Path $Here "play.cmd")   # профиль, хук, логи и запись по fix.ini; просит права администратора для PresentMon
+        Start-Process wscript.exe -ArgumentList "`"$(Join-Path $Here "play.vbs")`""   # профиль, хук, логи и запись по fix.ini; просит права администратора для PresentMon
     }
 }
 
