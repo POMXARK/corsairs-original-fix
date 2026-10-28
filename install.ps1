@@ -49,10 +49,10 @@ function Set-FontScale($path, $k) {
 }
 
 function Set-Walk($path, [bool]$wasd) {
-    # controls.ini: controlN=group,key1,key2,current1,current2; group 1 is the walking in towns: 24 forward, 25 back, 38 left, 39 right
-    # (virtual-key codes: W 87, S 83, A 65, D 68; the second key stays the mouse button / arrow of the original)
+    # controls.ini: controlN=group,key1,key2,current1,current2; group 1 is the walking in towns: 24 forward, 25 back; the turn stays on the mouse: forward + a turn by keys hangs the game
+    # (virtual-key codes: W 87, S 83; the second key stays the mouse button of the original)
     $enc = [Text.Encoding]::GetEncoding(1251)
-    $new = @{ "control24" = "1,87,1,87,1"; "control25" = "1,83,2,83,2"; "control38" = "1,65,37,65,37"; "control39" = "1,68,39,68,39" }
+    $new = @{ "control24" = "1,87,1,87,1"; "control25" = "1,83,2,83,2" }
     $src = if ($wasd) { $path } else { "$path.orig" }
     if (-not $wasd -and -not (Test-Path $src)) { return }
     $lines = [IO.File]::ReadAllLines($src, $enc) | ForEach-Object {
