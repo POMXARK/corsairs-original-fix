@@ -96,8 +96,8 @@ $auto.Add_CheckedChanged({ $nud.Enabled = -not $auto.Checked }); $auto.Checked =
 
 $null = Add-Ctl $g (New-Text "Суперсэмплинг") 12 124 96 22
 $cbSS = Add-Ctl $g (New-Object Windows.Forms.ComboBox) 110 124 190 22
-$cbSS.DropDownStyle = "DropDownList"; $ssVals = @(100, 150, 200, 300, 400)
-$cbSS.Items.AddRange(@("выкл.", "x1,5 (мягкий)", "x2 (сильный)", "x3 (Full HD, ~27 к/с)", "x4 (максимум, тяжело)"))
+$cbSS.DropDownStyle = "DropDownList"; $ssVals = @(100, 125, 150, 200, 250, 300, 400, 500, 600)
+$cbSS.Items.AddRange(@("выкл.", "x1,25 (лёгкий)", "x1,5 (мягкий)", "x2 (сильный)", "x2,5", "x3 (Full HD, ~27 к/с)", "x4 (тяжело)", "x5 (очень тяжело)", "x6 (максимум, только для малых окон)"))
 $si = [Array]::IndexOf($ssVals, [int]$cfg.supersample); $cbSS.SelectedIndex = $(if ($si -ge 0) { $si } else { 0 })
 $tip0.SetToolTip($cbSS, "Игра рисует в разрешении выше выбранного, а DDrawCompat уменьшает кадр до экрана: убирает лесенку на краях и мерцание у ближайших объектов. В окне размер окна остаётся выбранным (например 800x600), игра рисует крупнее, а маленькое окно показывает уменьшенную копию (рендер не выше высоты экрана). x2 при 2560x1440 даёт рендер 5120x2880: нужна мощная видеокарта.")
 $chThumb = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 152 292 22
@@ -108,7 +108,7 @@ function Update-Thumb {
     $lblRes.Text = $(if ($on) { "Размер окна" } else { "Разрешение" })
     if ($on) { $chFull.Checked = $false }
     $chFull.Enabled = -not $on; $cbFrame.Enabled = (-not $on) -and (-not $chFull.Checked)
-    if ($on -and $cbSS.SelectedIndex -eq 0) { $cbSS.SelectedIndex = $(if ([Windows.Forms.Screen]::PrimaryScreen.Bounds.Width -ge 1920) { 3 } else { 2 }) }   # x3 for Full HD windows (measured 27 fps), else x2
+    if ($on -and $cbSS.SelectedIndex -eq 0) { $cbSS.SelectedIndex = $(if ([Windows.Forms.Screen]::PrimaryScreen.Bounds.Width -ge 1920) { 5 } else { 3 }) }   # x3 for Full HD windows (measured 27 fps), else x2
 }
 $chThumb.Checked = ($cfg.thumb -eq 1 -and $curMode -eq "1")
 $chThumb.Add_CheckedChanged({ Update-Thumb }); Update-Thumb
