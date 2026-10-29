@@ -64,7 +64,7 @@ function Add-Ctl($parent, $ctl, $x, $y, $w, $h) {
 }
 function New-Text($text) { $l = New-Object Windows.Forms.Label; $l.Text = $text; $l.TextAlign = "MiddleLeft"; return $l }
 
-$g = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 4 316 212 0
+$g = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 4 316 236 0
 $g.Text = "Параметры визуализации"
 $lblRes = Add-Ctl $g (New-Text "Разрешение") 12 26 96 22
 $cbRes = Add-Ctl $g (New-Object Windows.Forms.ComboBox) 110 26 190 22
@@ -72,7 +72,7 @@ $cbRes.Items.AddRange($modes)
 
 # fix.ini: настройки наших патчей, их читают profile.ps1 (задержка, лимит FPS) и capture.ps1 (хук, логи, снимки, видео)
 $cfgPath = Join-Path $Here "fix.ini"
-$cfg = [ordered]@{ lowlag = 1; fpslimit = 0; keyrepeat = 1; finetick = 0; screenshots = 1; video = 1; audio = 1; fpslog = 1; osd = 1; statlog = 1; frame = 3; skipintro = 1; fontauto = 1; supersample = 100; thumb = 0; outw = 0; outh = 0 }
+$cfg = [ordered]@{ lowlag = 1; fpslimit = 0; keyrepeat = 1; finetick = 0; screenshots = 1; video = 1; audio = 1; fpslog = 1; osd = 1; statlog = 1; frame = 3; skipintro = 1; fontauto = 1; supersample = 100; thumb = 0; outw = 0; outh = 0; uiscale = 1 }
 if (Test-Path $cfgPath) { foreach ($l in [IO.File]::ReadAllLines($cfgPath)) { if ($l -match "^\s*(\w+)\s*=\s*(\d+)\s*$" -and $cfg.Contains($Matches[1])) { $cfg[$Matches[1]] = [int]$Matches[2] } } }
 
 $cbRes.Text = if ($cfg.thumb -eq 1 -and $cfg.outw -gt 0) { "$($cfg.outw)x$($cfg.outh)" } elseif ($curW -and $curH) { "${curW}x$curH" } else { $desktop }
@@ -114,6 +114,9 @@ $chThumb.Checked = ($cfg.thumb -eq 1 -and $curMode -eq "1")
 $chThumb.Add_CheckedChanged({ Update-Thumb }); Update-Thumb
 $chWasd = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 180 290 22
 $chWasd.Text = "Ходьба в городе на W A S D"; $chWasd.Checked = $curWasd
+$chUi = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 204 296 22
+$chUi.Text = "Крупный интерфейс при суперсэмплинге"; $chUi.Checked = [bool]$cfg.uiscale
+$tip0.SetToolTip($chUi, "При суперсэмплинге игра рисует кадр в разы больше, а кнопки и рамки меню остаются в своих пикселях и выглядят мелкими. Галочка увеличивает кнопки, рамки и шрифты меню пропорционально рендеру (оригиналы сохраняются, без галочки возвращаются). Работает при масштабе выше x1.")
 
 # счётчик FPS: место и размер задаются на миниатюре экрана; fix\osd.ini читает capture.ps1
 $osdPath = Join-Path $Here "osd.ini"
@@ -247,7 +250,7 @@ function Save-Cfg {
     $lim = [regex]::Match("$($cbFps.Text)", "\d+").Value
     $cfg.lowlag = [int]$chLow.Checked; $cfg.keyrepeat = [int]$chKeys.Checked; $cfg.finetick = [int]$chFine.Checked
     $cfg.screenshots = [int]$chShot.Checked; $cfg.video = [int]$chVid.Checked; $cfg.audio = [int]$chAud.Checked; $cfg.fpslog = [int]$chLog.Checked; $cfg.statlog = [int]$chStat.Checked
-    $cfg.osd = [int]$chOsd.Checked; $cfg.fontauto = [int]$auto.Checked; $cfg.frame = $frameVals[[Math]::Max(0, $cbFrame.SelectedIndex)]; $cfg.supersample = $ssVals[[Math]::Max(0, $cbSS.SelectedIndex)]; $cfg.thumb = [int]$chThumb.Checked; $cfg.skipintro = [int]$chSkip.Checked; $cfg.fpslimit = $(if ($lim) { [Math]::Min(1000, [int]$lim) } else { 0 })
+    $cfg.osd = [int]$chOsd.Checked; $cfg.fontauto = [int]$auto.Checked; $cfg.frame = $frameVals[[Math]::Max(0, $cbFrame.SelectedIndex)]; $cfg.supersample = $ssVals[[Math]::Max(0, $cbSS.SelectedIndex)]; $cfg.thumb = [int]$chThumb.Checked; $cfg.uiscale = [int]$chUi.Checked; $cfg.skipintro = [int]$chSkip.Checked; $cfg.fpslimit = $(if ($lim) { [Math]::Min(1000, [int]$lim) } else { 0 })
     [IO.File]::WriteAllLines($cfgPath, @($cfg.Keys | ForEach-Object { "$_=$($cfg[$_])" }))
 }
 
@@ -260,6 +263,7 @@ function Apply-Settings([switch]$Launch) {
     if ((-not $chFull.Checked) -or $chThumb.Checked) { $psArgs += "-Windowed" }
     if ($cfg.supersample -gt 100) { $psArgs += @("-Supersample", ($cfg.supersample / 100.0).ToString([Globalization.CultureInfo]::InvariantCulture)) }
     if ($chWasd.Checked) { $psArgs += "-Wasd" }
+    if ($chUi.Checked) { $psArgs += "-UiScale" }
     $psArgs += @("-FontScale", $(if ($auto.Checked) { "0" } else { ([double]$nud.Value).ToString([Globalization.CultureInfo]::InvariantCulture) }))
     $status.Text = "Применяю..."; $f.Refresh()
     $out = & powershell @psArgs 2>&1 | Out-String
@@ -283,6 +287,6 @@ $b4 = Add-Ctl $f (New-Object Windows.Forms.Button) 334 108 80 26; $b4.Text = "З
 $b4.Add_Click({ $f.Close() })
 
 # the first group grew by 24 px: everything under it (left column) moves down, the form too
-foreach ($c in $f.Controls) { if ($c -ne $g -and $c.Left -lt 330 -and $c.Top -ge 190) { $c.Top += 24 } }
-$f.ClientSize = New-Object Drawing.Size(422, 690)
+foreach ($c in $f.Controls) { if ($c -ne $g -and $c.Left -lt 330 -and $c.Top -ge 190) { $c.Top += 48 } }
+$f.ClientSize = New-Object Drawing.Size(422, 714)
 [void]$f.ShowDialog()
