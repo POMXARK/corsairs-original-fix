@@ -15,6 +15,7 @@ param(
     [int]$Width = 0,    # 0 = the resolution of the desktop
     [int]$Height = 0,
     [switch]$Wasd,      # walking in towns on W A S D (the original: arrows and the mouse)
+    [double]$Supersample = 1,   # the game renders at Width*k x Height*k: DDrawCompat shrinks it to the screen (fullscreen), overlay.c averages it down to the window (windowed)
     [double]$FontScale = 0,   # 0 = Height / 960 (not below 1); 1 leaves the fonts as they are
     [switch]$Uninstall
 )
@@ -86,6 +87,8 @@ if ($Uninstall) {
     return
 }
 
+# dgVoodoo2 (dgvoodoo.ps1) keeps its own ddraw.dll and the DDrawCompat copy as ddraw.dll.ddc: DDrawCompat is not put over it
+if (-not (Test-Path (Join-Path $GameDir "ddraw.dll.ddc"))) {
 $zip = Join-Path $env:TEMP "DDrawCompat-v$DdVersion.zip"
 if (-not (Test-Path $zip) -or (Get-FileHash $zip -Algorithm SHA256).Hash -ne $DdSha256.ToUpper()) {
     Write-Host "downloading DDrawCompat $DdVersion ..."
@@ -102,12 +105,21 @@ if (-not (Test-Path $dll) -or (Get-FileHash $dll).Hash -ne (Get-FileHash $new).H
 # a running game holds ddraw.dll: the same file is not copied again (the settings window can be saved while the game is open)
 if (-not (Test-Path $dll) -or (Get-FileHash $dll).Hash -ne (Get-FileHash $new).Hash) { Copy-Item $new $dll -Force }
 Copy-Item (Join-Path $Here "DDrawCompat.ini") (Join-Path $GameDir "DDrawCompat.ini") -Force
+}
 
 if (-not $Width -or -not $Height) {
     $v = Get-CimInstance Win32_VideoController | Where-Object { $_.CurrentHorizontalResolution } | Select-Object -First 1
     $Width = if ($v) { [int]$v.CurrentHorizontalResolution } else { 1280 }
     $Height = if ($v) { [int]$v.CurrentVerticalResolution } else { 960 }
     if ($Windowed) { $Width = 1024; $Height = 768 }   # a window with a title bar has to fit the screen
+}
+if ($Supersample -gt 1) {
+    $k = $Supersample
+    $Width = [int]([Math]::Round($Width * $k / 2) * 2); $Height = [int]([Math]::Round($Height * $k / 2) * 2)
+    # the resolution has to be in the list of DDrawCompat, otherwise the game does not get it
+    $dd = Join-Path $GameDir "DDrawCompat.ini"; $res = "${Width}x$Height"
+    $t = [IO.File]::ReadAllText($dd)
+    if ($t -match "(?m)^SupportedResolutions=(.*)$" -and $Matches[1] -notmatch "\b$res\b") { [IO.File]::WriteAllText($dd, ($t -replace "(?m)^(SupportedResolutions=.*)$", "`$1, $res")) }
 }
 Save-Original $ini
 Set-IniKey $ini "BPP" 16   # the game is 16-bit; DDrawCompat.ini (DesktopColorDepth=16) keeps it so on a 32-bit desktop

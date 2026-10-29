@@ -25,7 +25,7 @@ param(
 )
 $ErrorActionPreference = "Stop"
 # fix.ini next to this script (written by the settings window): the switches of the patches, the logs, the screenshots and the video; the command line only adds "off" switches
-$Cfg = @{ keyrepeat = 1; finetick = 0; screenshots = 1; video = 1; audio = 1; fpslog = 1; osd = 1; statlog = 1; frame = 3; skipintro = 1; fpslimit = 0; autotest = 0; testx = 0; testy = 0 }
+$Cfg = @{ keyrepeat = 1; finetick = 0; screenshots = 1; video = 1; audio = 1; fpslog = 1; osd = 1; statlog = 1; frame = 3; skipintro = 1; fpslimit = 0; autotest = 0; testx = 0; testy = 0; thumb = 0; outw = 0; outh = 0 }
 $cfgFile = Join-Path $PSScriptRoot "fix.ini"
 if (Test-Path $cfgFile) { foreach ($l in [IO.File]::ReadAllLines($cfgFile)) { if ($l -match "^\s*(\w+)\s*=\s*(\d+)\s*$" -and $Cfg.ContainsKey($Matches[1])) { $Cfg[$Matches[1]] = [int]$Matches[2] } } }
 if (-not $Cfg.keyrepeat) { $NoKeyRepeat = [switch]$true }
@@ -130,6 +130,16 @@ public static class GameHook {
         bool ok = WriteProcessMemory(proc, (IntPtr)at, p, 6, out n);
         VirtualProtectEx(proc, (IntPtr)at, (UIntPtr)6, old, out old);
         FlushInstructionCache(proc, (IntPtr)at, (UIntPtr)6);
+        return ok;
+    }
+    // the window procedure of the game: the immediate 0x417c80 of "mov [ebp-0x54], imm" at 0x417B66 -> wndproc_fix (overlay.c)
+    public static bool PatchWndProc() {
+        byte[] b = new byte[7]; int n; uint old; int at = 0x417B66;
+        if (proc == IntPtr.Zero || !ReadProcessMemory(proc, (IntPtr)at, b, 7, out n) || b[0] != 0xC7 || b[1] != 0x45 || BitConverter.ToInt32(b, 3) != 0x417C80) return false;
+        VirtualProtectEx(proc, (IntPtr)(at + 3), (UIntPtr)4, 0x40, out old);
+        bool ok = WriteProcessMemory(proc, (IntPtr)(at + 3), BitConverter.GetBytes(Code + 0x6000), 4, out n);
+        VirtualProtectEx(proc, (IntPtr)(at + 3), (UIntPtr)4, old, out old);
+        FlushInstructionCache(proc, (IntPtr)at, (UIntPtr)7);
         return ok;
     }
     public static string Install(int pid, byte[] code, int mode) {
@@ -364,9 +374,10 @@ public static class WinDump {
 "@
 $script:bar = $null; $script:barH = 26; $script:winDumped = $false
 $script:cursorFixed = $false
+$script:dgVoodoo = Test-Path (Join-Path $GameDir "ddraw.dll.ddc")   # dgVoodoo2 draws into the client area itself: the origin must not be added to the Blt rectangle (DDrawCompat only)
 function Set-Pos($x, $y) {
     if (-not $script:cursorFixed -and $hooked) { $script:cursorFixed = [GameHook]::WindowFix(); Log "window fix: $($script:cursorFixed)" }
-    if ($script:cursorFixed -and -not $script:bltFixed) { $script:bltFixed = [GameHook]::BltFix(); Log "blt fix: $($script:bltFixed)" }
+    if ($script:cursorFixed -and -not $script:bltFixed -and -not $script:dgVoodoo) { $script:bltFixed = [GameHook]::BltFix(); Log "blt fix: $($script:bltFixed)" }
     if ($script:cursorFixed) { [void][GameHook]::Poke(0xC8, [BitConverter]::GetBytes([int]$x)); [void][GameHook]::Poke(0xCC, [BitConverter]::GetBytes([int]$y)) }
     if ($script:cursorFixed) { [void][GameHook]::Poke(0xD4, [BitConverter]::GetBytes([int]1)); return }   # the game moves itself in its next frame (overlay.c hook): a move from outside freezes the picture of DDrawCompat
     $t0 = Get-Date
@@ -424,7 +435,7 @@ function Set-Frame {
         if (-not $script:measured -and ((Get-Date) - $script:placedAt).TotalSeconds -gt 2) {   # the borders AdjustWindowRectEx promised against the real ones: the client area must be exactly the picture
             $script:measured = $true
             $p0 = New-Object CapNative+PT; [void][CapNative]::ClientToScreen($h, [ref]$p0); $cr = New-Object CapNative+RECT; [void][CapNative]::GetClientRect($h, [ref]$cr)
-            $want = [GameHook]::PeekAbs(0x7C54FC); $wanth = [GameHook]::PeekAbs(0x7C5500)
+            $want = $(if ($script:smallW) { $script:smallW } else { [GameHook]::PeekAbs(0x7C54FC) }); $wanth = $(if ($script:smallH) { $script:smallH } else { [GameHook]::PeekAbs(0x7C5500) })
             $m = @(($p0.X - $r.Left), ($p0.Y - $r.Top), (($r.Right - $r.Left) - $want), (($r.Bottom - $r.Top) - $wanth))
             Log "measured: client origin in outer $($m[0]),$($m[1]) (set $($script:ints -join ',')), client $($cr.Right)x$($cr.Bottom), outer $($r.Right - $r.Left)x$($r.Bottom - $r.Top), picture ${want}x$wanth"
             $nw = ($r.Right - $r.Left) - $cr.Right + 0; $nh = ($r.Bottom - $r.Top) - $cr.Bottom
@@ -736,12 +747,15 @@ if (-not $NoHook -and (Test-Path $binFile)) {
             $wa = [Windows.Forms.Screen]::PrimaryScreen.WorkingArea
             $fx = [CapNative]::GetSystemMetrics(7); $fy = [CapNative]::GetSystemMetrics(8); $cap = [CapNative]::GetSystemMetrics(4)
             $ints = @($fx, ($fy + $cap), (2 * $fx), (2 * $fy + $cap)); $script:ints = $ints
-            $cx = $wa.X + [Math]::Max(0, [int](($wa.Width - 800) / 2)); $cy = $wa.Y + [Math]::Max($ints[1], [int](($wa.Height - 600) / 2))
+            $small = ($Cfg.thumb -eq 1 -and $Cfg.outw -gt 0)   # the small window: the game renders bigger (engine.ini), overlay.c averages the picture down to outw x outh
+            $sw = $(if ($small) { [int]$Cfg.outw } else { 800 }); $sh = $(if ($small) { [int]$Cfg.outh } else { 600 })
+            if ($small) { [void][GameHook]::Poke(0x300, [BitConverter]::GetBytes($sw) + [BitConverter]::GetBytes($sh)); $script:smallW = $sw; $script:smallH = $sh }
+            $cx = $wa.X + [Math]::Max(0, [int](($wa.Width - $sw) / 2)); $cy = $wa.Y + [Math]::Max($ints[1], [int](($wa.Height - $sh) / 2))
             $iv = @($ints[0], $ints[1], $ints[2], $ints[3]) + @($cx, $cy)
             [void][GameHook]::Poke(0x900, ($ints | % { [BitConverter]::GetBytes([int]$_) } | % { $_ }))
             [void][GameHook]::Poke(0xC8, [BitConverter]::GetBytes([int]$cx) + [BitConverter]::GetBytes([int]$cy))
             [void][GameHook]::Poke(0x910, [BitConverter]::GetBytes([int]1) + [BitConverter]::GetBytes([int]0x00CA0000))
-            $okc = [GameHook]::PatchCall(0x417BD8, 0x431194, 0x4000); $okr = [GameHook]::PatchCall(0x417FE4, 0x4311A4, 0x5000); Log "create window fix: $okc, video rect fix: $okr, client at $cx,$cy, frame $($ints -join ',')"
+            $okc = [GameHook]::PatchCall(0x417BD8, 0x431194, 0x4000); $okr = [GameHook]::PatchCall(0x417FE4, 0x4311A4, 0x5000); $okw = $(if ($small) { [GameHook]::PatchWndProc() } else { "-" }); Log "create window fix: $okc, video rect fix: $okr, wndproc fix: $okw, client at $cx,$cy, frame $($ints -join ',')"
         }
     }
 }
@@ -749,9 +763,13 @@ if ($launched) {
     [GameHook]::Resume()
     if ($hooked -and $windowed -and $Cfg.frame -eq 3) {   # the imports are resolved a moment after the start: the redirects (MoveWindow of the game puts the window in the corner) are done before it gets there
         $t0 = Get-Date
-        while (((Get-Date) - $t0).TotalSeconds -lt 10 -and -not $script:cursorFixed) {
-            $iat = [GameHook]::PeekAbs(0x43116C)
-            if ($iat -gt 0x10000000) { $script:cursorFixed = [GameHook]::WindowFix(); Log "window fix at start: $($script:cursorFixed)" } else { Start-Sleep -Milliseconds 2 }
+        while (((Get-Date) - $t0).TotalSeconds -lt 15 -and (-not $script:cursorFixed -or -not $script:bltFixed)) {
+            if (-not $script:cursorFixed) {
+                $iat = [GameHook]::PeekAbs(0x43116C)
+                if ($iat -gt 0x10000000) { $script:cursorFixed = [GameHook]::WindowFix(); Log "window fix at start: $($script:cursorFixed)" } else { Start-Sleep -Milliseconds 2 }
+            } elseif (-not $script:dgVoodoo) {   # the Blt of the primary surface is redirected as soon as the surface exists: before that the first frames show the corner of the big picture
+                if ([GameHook]::BltFix()) { $script:bltFixed = $true; Log "blt fix at start: True ($(((Get-Date) - $t0).TotalMilliseconds) ms)" } else { Start-Sleep -Milliseconds 2 }
+            } else { break }
         }
     }
 }

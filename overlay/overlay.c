@@ -21,6 +21,9 @@
  *   +0xF8 the real GetCursorPos, cursor_get = code+0x2000 (capture.ps1 points the import of GetCursorPos of the loaded modules of the game at it in a moved window)
  *   +0xF4 frame limit N fps (0 = none): hook() waits until 1/N s have passed since the previous frame (DDrawCompat's FpsLimiter does not touch a window that is drawn with Blt)
  *   +0xA0 key repeat on (0/1, capture.ps1 writes 1 while the game is the window in front); +0x500 unsigned hold[256]: GetTickCount of the key press (0 = up)
+ *   +0x300/+0x304 the size of the small window (client area), 0 = off: the game renders at its own size (engine.ini), hook() averages the back buffer down to this size in place (box filter), +0x308 1 = the frame is averaged, blt_fix then shows only (0,0,w,h) of it;
+ *   wndproc_fix = code+0x6000 (the immediate at 0x417B69: the window procedure of the game) scales the position of the mouse messages;
+ *   the cursor is scaled by the same ratio (cursor_get, cursor_fix), create_fix/move_fix make the window this size
  * Build: ./build_overlay.sh  ->  overlay.bin (the code, loaded at 0x7E001000).
  */
 typedef void (__attribute__((cdecl)) *TextFn)(void *font, int x, int y, const char *fmt, ...);
@@ -58,6 +61,12 @@ __attribute__((stdcall)) unsigned fast_tick(void)
  * In a window that is moved this is the replacement of that import: the origin of the client area (+0xC8, +0xCC, written by capture.ps1) is added, +0xC4 is the real SetCursorPos. */
 __attribute__((stdcall, aligned(128))) int cursor_fix(int x, int y)
 {
+    char *dev = *(char *volatile *)0x77DD1C;
+    int ow = DATA[0x300 / 4], oh = DATA[0x304 / 4];
+    if (ow && dev) {
+        int rw = *(int *)(dev + 0x9C3F0), rh = *(int *)(dev + 0x9C3F4);
+        if (rw > 0 && rh > 0) { x = x * ow / rw; y = y * oh / rh; }
+    }
     return ((int (__attribute__((stdcall)) *)(int, int))DATA[0xC4 / 4])(x + DATA[0xC8 / 4], y + DATA[0xCC / 4]);
 }
 
@@ -78,6 +87,66 @@ static unsigned short rgb(int f565, int r, int g, int b)
 {
     if (f565) return (unsigned short)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
     return (unsigned short)(((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3));
+}
+
+/* The back buffer (16 bit, rw x rh) is averaged down to ow x oh in place: every output pixel is the mean of the box of source pixels it covers. Row y is written after it has been
+ * computed into a line buffer, and the rows it needs are at y*rh/oh >= y, so no source row is lost. */
+static void downscale(unsigned short *base, int pitch, int rw, int rh, int ow, int oh, int f565)
+{
+    unsigned short line[2560];
+    int x, y, i, j;
+    for (y = 0; y < oh; y++) {
+        int y0 = y * rh / oh, y1 = (y + 1) * rh / oh;
+        if (y1 <= y0) y1 = y0 + 1;
+        for (x = 0; x < ow; x++) {
+            int x0 = x * rw / ow, x1 = (x + 1) * rw / ow;
+            unsigned r = 0, g = 0, b = 0, n;
+            if (x1 <= x0) x1 = x0 + 1;
+            for (j = y0; j < y1; j++) {
+                const unsigned short *row = (const unsigned short *)((const char *)base + j * pitch);
+                for (i = x0; i < x1; i++) {
+                    unsigned p = row[i];
+                    if (f565) { r += p >> 11; g += (p >> 5) & 63; b += p & 31; }
+                    else { r += (p >> 10) & 31; g += (p >> 5) & 31; b += p & 31; }
+                }
+            }
+            n = (unsigned)((y1 - y0) * (x1 - x0));
+            r = (r + n / 2) / n; g = (g + n / 2) / n; b = (b + n / 2) / n;
+            line[x] = f565 ? (unsigned short)((r << 11) | (g << 5) | b) : (unsigned short)((r << 10) | (g << 5) | b);
+        }
+        {
+            unsigned short *dst = (unsigned short *)((char *)base + y * pitch);
+            for (x = 0; x < ow; x++) dst[x] = line[x];
+        }
+    }
+}
+
+/* The same for a whole ratio k (rw = k*ow, rh = k*oh, k*k <= 32): the three channels are summed in one 32-bit word (the green bits are moved up by 16, the gaps between the fields hold the carries). */
+static int downscale_int(unsigned short *base, int pitch, int k, int ow, int oh, int f565)
+{
+    unsigned short line[2560];
+    unsigned mask = f565 ? 0x07E0F81Fu : 0x03E07C1Fu;
+    unsigned n = (unsigned)(k * k), inv = 65536u / n;
+    int x, y, i, j;
+    for (y = 0; y < oh; y++) {
+        const char *src = (const char *)base + y * k * pitch;
+        for (x = 0; x < ow; x++) {
+            unsigned acc = 0, r, g, b;
+            for (j = 0; j < k; j++) {
+                const unsigned short *row = (const unsigned short *)(src + j * pitch) + x * k;
+                for (i = 0; i < k; i++) { unsigned p = row[i]; acc += (p | (p << 16)) & mask; }
+            }
+            if (f565) { b = acc & 0x7FF; r = (acc >> 11) & 0x3FF; g = (acc >> 21) & 0x7FF; }
+            else { b = acc & 0x3FF; r = (acc >> 10) & 0x3FF; g = (acc >> 21) & 0x3FF; }
+            b = (b * inv + 0x8000) >> 16; r = (r * inv + 0x8000) >> 16; g = (g * inv + 0x8000) >> 16;
+            line[x] = f565 ? (unsigned short)((r << 11) | (g << 5) | b) : (unsigned short)((r << 10) | (g << 5) | b);
+        }
+        {
+            unsigned short *dst = (unsigned short *)((char *)base + y * pitch);
+            for (x = 0; x < ow; x++) dst[x] = line[x];
+        }
+    }
+    return 1;
 }
 
 __attribute__((fastcall, aligned(256))) void hook(void *dev)   /* at +0x100 of the code: fast_tick is at +0, the call site points at +0x100 */
@@ -103,7 +172,7 @@ __attribute__((fastcall, aligned(256))) void hook(void *dev)   /* at +0x100 of t
 
     if (DATA[0xD4 / 4]) {   /* a move that capture.ps1 asks for: it is made here, in the thread of the game, so DDrawCompat takes it for a move of the game window itself (from outside its picture stops) */
         DATA[0xD4 / 4] = 0;
-        ((int (__attribute__((stdcall)) *)(void *, int, int, int, int, int))DATA[0xD0 / 4])(*(void *volatile *)0x44D704, DATA[0xC8 / 4] - DATA[0x900 / 4], DATA[0xCC / 4] - DATA[0x904 / 4], *(volatile int *)0x7C54FC + DATA[0x908 / 4], *(volatile int *)0x7C5500 + DATA[0x90C / 4], 1);
+        ((int (__attribute__((stdcall)) *)(void *, int, int, int, int, int))DATA[0xD0 / 4])(*(void *volatile *)0x44D704, DATA[0xC8 / 4] - DATA[0x900 / 4], DATA[0xCC / 4] - DATA[0x904 / 4], (DATA[0x300 / 4] ? DATA[0x300 / 4] : *(volatile int *)0x7C54FC) + DATA[0x908 / 4], (DATA[0x300 / 4] ? DATA[0x304 / 4] : *(volatile int *)0x7C5500) + DATA[0x90C / 4], 1);
     }
     DATA[31] = DATA[31] + 1;                  /* how many frames came here: capture.ps1 logs it */
     DATA[0x94 / 4] = (int)now;
@@ -201,6 +270,21 @@ __attribute__((fastcall, aligned(256))) void hook(void *dev)   /* at +0x100 of t
             }
         }
     }
+    DATA[0x308 / 4] = 0;
+    if (DATA[0x300 / 4] > 0 && DATA[0x300 / 4] <= 2560 && DATA[0x304 / 4] > 0) {   /* the small window: the frame is averaged down to its size, blt_fix shows that corner */
+        int pitch = 0;
+        int rw = *(volatile int *)((char *)dev + 0x9c3f0), rh = *(volatile int *)((char *)dev + 0x9c3f4);
+        if (rw >= DATA[0x300 / 4] && rh >= DATA[0x304 / 4]) {
+            unsigned short *base = (unsigned short *)((LockFn)lock_addr)(dev, &pitch);
+            if (base && pitch > 0) {
+                int ow = DATA[0x300 / 4], oh = DATA[0x304 / 4], f = *(volatile int *)((char *)dev + 0x9c370), k = rw / ow;
+                if (k >= 1 && k * k <= 32 && rw == k * ow && rh == k * oh) downscale_int(base, pitch, k, ow, oh, f);
+                else downscale(base, pitch, rw, rh, ow, oh, f);
+                ((UnlockFn)unlock_addr)(dev);
+                DATA[0x308 / 4] = 1;
+            }
+        }
+    }
     ((FlipFn)flip_addr)(dev);
 }
 
@@ -210,9 +294,20 @@ __attribute__((fastcall, aligned(256))) void hook(void *dev)   /* at +0x100 of t
  * The device of the game is *(0x77DD1C): +0x90168 the primary surface, +0x9C3F0 and +0x9C3F4 the size of the window. +0xD8 is the real Blt. */
 __attribute__((stdcall, aligned(4096))) int blt_fix(void *self, int *dst, void *src, int *srect, unsigned flags, void *fx)
 {
-    int r[4];
+    int r[4], sr[4];
     char *dev = *(char *volatile *)0x77DD1C;
-    if (dev && self == *(void **)(dev + 0x90168)) {
+    if (dev && DATA[0x308 / 4] && self == *(void **)(dev + 0x90168) && (!dst || dst[2] - dst[0] == *(int *)(dev + 0x9C3F0))) {   /* the flip of an averaged frame: only its corner is shown, 1:1 */
+        int ox = DATA[0xC8 / 4], oy = DATA[0xCC / 4];
+        DATA[0x308 / 4] = 0;
+        r[0] = ox; r[1] = oy; r[2] = ox + DATA[0x300 / 4]; r[3] = oy + DATA[0x304 / 4];
+        sr[0] = 0; sr[1] = 0; sr[2] = DATA[0x300 / 4]; sr[3] = DATA[0x304 / 4];
+        dst = r; srect = sr;
+    } else if (dev && DATA[0x300 / 4] && self == *(void **)(dev + 0x90168)) {   /* any other frame to the primary that did not pass hook() (loading, menu start, videos): all of it into the small window, not its corner */
+        /* a whole frame that did not pass hook() (loading, videos): all of it into the small window, not its corner */
+        int ox = DATA[0xC8 / 4], oy = DATA[0xCC / 4];
+        r[0] = ox; r[1] = oy; r[2] = ox + DATA[0x300 / 4]; r[3] = oy + DATA[0x304 / 4];
+        dst = r;
+    } else if (dev && self == *(void **)(dev + 0x90168)) {
         int ox = DATA[0xC8 / 4], oy = DATA[0xCC / 4];
         r[0] = (dst ? dst[0] : 0) + ox;
         r[1] = (dst ? dst[1] : 0) + oy;
@@ -231,7 +326,15 @@ __attribute__((stdcall, aligned(4096))) int blt_fix(void *self, int *dst, void *
 __attribute__((stdcall, aligned(8192))) int cursor_get(int *pt)
 {
     int ret = ((int (__attribute__((stdcall)) *)(int *))DATA[0xF8 / 4])(pt);
-    if (ret && pt) { pt[0] -= DATA[0xC8 / 4]; pt[1] -= DATA[0xCC / 4]; }
+    if (ret && pt) {
+        char *dev = *(char *volatile *)0x77DD1C;
+        int ow = DATA[0x300 / 4], oh = DATA[0x304 / 4];
+        pt[0] -= DATA[0xC8 / 4]; pt[1] -= DATA[0xCC / 4];
+        if (ow && dev) {   /* the small window: the game thinks in its own (bigger) picture */
+            int rw = *(int *)(dev + 0x9C3F0), rh = *(int *)(dev + 0x9C3F4);
+            if (ow > 0 && oh > 0) { pt[0] = pt[0] * rw / ow; pt[1] = pt[1] * rh / oh; }
+        }
+    }
     return ret;
 }
 
@@ -239,7 +342,7 @@ __attribute__((stdcall, aligned(8192))) int cursor_get(int *pt)
  * +0xD0 is the real MoveWindow. */
 __attribute__((stdcall, aligned(4096))) int move_fix(void *h, int x, int y, int w, int ht, int repaint)
 {
-    return ((int (__attribute__((stdcall)) *)(void *, int, int, int, int, int))DATA[0xD0 / 4])(h, x + DATA[0xC8 / 4] - DATA[0x900 / 4], y + DATA[0xCC / 4] - DATA[0x904 / 4], w + DATA[0x908 / 4], ht + DATA[0x90C / 4], repaint);
+    return ((int (__attribute__((stdcall)) *)(void *, int, int, int, int, int))DATA[0xD0 / 4])(h, x + DATA[0xC8 / 4] - DATA[0x900 / 4], y + DATA[0xCC / 4] - DATA[0x904 / 4], (DATA[0x300 / 4] ? DATA[0x300 / 4] : w) + DATA[0x908 / 4], (DATA[0x300 / 4] ? DATA[0x304 / 4] : ht) + DATA[0x90C / 4], repaint);
 }
 
 /* CreateWindowExA of the game (the call at 0x417BD8, capture.ps1 patches it before the game runs): with a real frame (+0x910 = 1) the window is made at once with the style +0x914,
@@ -249,6 +352,7 @@ __attribute__((stdcall, aligned(4096))) void *create_fix(int ex, const char *cls
     if (DATA[0x910 / 4]) {
         style = (unsigned)DATA[0x914 / 4];
         x = DATA[0xC8 / 4] - DATA[0x900 / 4]; y = DATA[0xCC / 4] - DATA[0x904 / 4];
+        if (DATA[0x300 / 4]) { w = DATA[0x300 / 4]; h = DATA[0x304 / 4]; }
         w += DATA[0x908 / 4]; h += DATA[0x90C / 4];
     }
     return ((void *(__attribute__((stdcall)) *)(int, const char *, const char *, unsigned, int, int, int, int, void *, void *, void *, void *))*(void *volatile *)0x431194)(ex, cls, name, style, x, y, w, h, parent, menu, inst, param);
@@ -264,4 +368,19 @@ __attribute__((stdcall, aligned(4096))) int rect_fix(void *h, int *r)
         r[0] = 0; r[1] = 0; r[2] = w; r[3] = ht;
     }
     return ok;
+}
+
+/* The window procedure of the game (0x417c80, its address is the immediate of the instruction at 0x417B66, capture.ps1 points it here): the mouse messages carry the position in the pixels of the small
+ * window, the game works in its own (bigger) picture. WM_MOUSEMOVE .. WM_MBUTTONDBLCLK (0x200..0x209) get the position of lParam scaled by the ratio. */
+__attribute__((stdcall, aligned(4096))) int wndproc_fix(void *h, unsigned msg, unsigned wp, unsigned lp)
+{
+    char *dev = *(char *volatile *)0x77DD1C;
+    int ow = DATA[0x300 / 4], oh = DATA[0x304 / 4];
+    if (ow > 0 && oh > 0 && dev && msg >= 0x200 && msg <= 0x209) {
+        int rw = *(int *)(dev + 0x9C3F0), rh = *(int *)(dev + 0x9C3F4);
+        int x = (short)(lp & 0xFFFF), y = (short)(lp >> 16);
+        if (rw > 0 && rh > 0) { x = x * rw / ow; y = y * rh / oh; lp = (unsigned)(x & 0xFFFF) | ((unsigned)y << 16); }
+    }
+    volatile unsigned real = 0x417C80;
+    return ((int (__attribute__((stdcall)) *)(void *, unsigned, unsigned, unsigned))real)(h, msg, wp, lp);
 }

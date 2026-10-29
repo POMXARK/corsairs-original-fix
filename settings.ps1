@@ -53,7 +53,7 @@ if ((Test-Path $fonts) -and (Test-Path $origFonts)) {
 $f = New-Object Windows.Forms.Form
 $f.Text = "Установки ""Корсаров"""
 $f.AutoScaleMode = "None"
-$f.ClientSize = New-Object Drawing.Size(422, 638)
+$f.ClientSize = New-Object Drawing.Size(422, 666)
 $f.StartPosition = "CenterScreen"
 $f.FormBorderStyle = "FixedDialog"; $f.MaximizeBox = $false; $f.MinimizeBox = $false
 $f.Font = New-Object Drawing.Font("Tahoma", 8.25)
@@ -64,18 +64,18 @@ function Add-Ctl($parent, $ctl, $x, $y, $w, $h) {
 }
 function New-Text($text) { $l = New-Object Windows.Forms.Label; $l.Text = $text; $l.TextAlign = "MiddleLeft"; return $l }
 
-$g = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 4 316 160 0
+$g = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 4 316 212 0
 $g.Text = "Параметры визуализации"
-$null = Add-Ctl $g (New-Text "Разрешение") 12 26 90 22
+$lblRes = Add-Ctl $g (New-Text "Разрешение") 12 26 96 22
 $cbRes = Add-Ctl $g (New-Object Windows.Forms.ComboBox) 110 26 190 22
 $cbRes.Items.AddRange($modes)
-$cbRes.Text = if ($curW -and $curH) { "${curW}x$curH" } else { $desktop }
 
 # fix.ini: настройки наших патчей, их читают profile.ps1 (задержка, лимит FPS) и capture.ps1 (хук, логи, снимки, видео)
 $cfgPath = Join-Path $Here "fix.ini"
-$cfg = [ordered]@{ lowlag = 1; fpslimit = 0; keyrepeat = 1; finetick = 0; screenshots = 1; video = 1; audio = 1; fpslog = 1; osd = 1; statlog = 1; frame = 3; skipintro = 1; fontauto = 1 }
+$cfg = [ordered]@{ lowlag = 1; fpslimit = 0; keyrepeat = 1; finetick = 0; screenshots = 1; video = 1; audio = 1; fpslog = 1; osd = 1; statlog = 1; frame = 3; skipintro = 1; fontauto = 1; supersample = 100; thumb = 0; outw = 0; outh = 0 }
 if (Test-Path $cfgPath) { foreach ($l in [IO.File]::ReadAllLines($cfgPath)) { if ($l -match "^\s*(\w+)\s*=\s*(\d+)\s*$" -and $cfg.Contains($Matches[1])) { $cfg[$Matches[1]] = [int]$Matches[2] } } }
 
+$cbRes.Text = if ($cfg.thumb -eq 1 -and $cfg.outw -gt 0) { "$($cfg.outw)x$($cfg.outh)" } elseif ($curW -and $curH) { "${curW}x$curH" } else { $desktop }
 $chFull = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 62 140 20
 $chFull.Text = "Полный экран"; $chFull.Checked = ($curMode -ne "1"); $chFull.Width = 100
 $frameModes = @("окно в углу, без рамки", "полоса-заголовок, центр", "настоящая рамка, центр")
@@ -94,7 +94,25 @@ $auto = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 184 96 116 22
 $auto.Text = "по экрану"
 $auto.Add_CheckedChanged({ $nud.Enabled = -not $auto.Checked }); $auto.Checked = [bool]$cfg.fontauto; $nud.Enabled = -not $auto.Checked
 
-$chWasd = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 126 290 22
+$null = Add-Ctl $g (New-Text "Суперсэмплинг") 12 124 96 22
+$cbSS = Add-Ctl $g (New-Object Windows.Forms.ComboBox) 110 124 190 22
+$cbSS.DropDownStyle = "DropDownList"; $ssVals = @(100, 150, 200, 300, 400)
+$cbSS.Items.AddRange(@("выкл.", "x1,5 (мягкий)", "x2 (сильный)", "x3 (Full HD, ~27 к/с)", "x4 (максимум, тяжело)"))
+$si = [Array]::IndexOf($ssVals, [int]$cfg.supersample); $cbSS.SelectedIndex = $(if ($si -ge 0) { $si } else { 0 })
+$tip0.SetToolTip($cbSS, "Игра рисует в разрешении выше выбранного, а DDrawCompat уменьшает кадр до экрана: убирает лесенку на краях и мерцание у ближайших объектов. В окне размер окна остаётся выбранным (например 800x600), игра рисует крупнее, а маленькое окно показывает уменьшенную копию (рендер не выше высоты экрана). x2 при 2560x1440 даёт рендер 5120x2880: нужна мощная видеокарта.")
+$chThumb = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 152 292 22
+$chThumb.Text = "Маленькое окно, рендер выше (сглаживание)"
+$tip0.SetToolTip($chThumb, "Маленькое окно выбранного размера (например 800x600) показывает уменьшенную копию кадра, который игра рисует крупнее (масштаб справа). Лесенка пропадает, а размер окна не зависит от разрешения рендера. Рендер не выше высоты экрана. Полный экран и рамка в этом режиме не нужны: окно со своей рамкой, закрытие окна закрывает игру. Масштаб «выкл.» заменяется на x2.")
+function Update-Thumb {
+    $on = $chThumb.Checked
+    $lblRes.Text = $(if ($on) { "Размер окна" } else { "Разрешение" })
+    if ($on) { $chFull.Checked = $false }
+    $chFull.Enabled = -not $on; $cbFrame.Enabled = (-not $on) -and (-not $chFull.Checked)
+    if ($on -and $cbSS.SelectedIndex -eq 0) { $cbSS.SelectedIndex = $(if ([Windows.Forms.Screen]::PrimaryScreen.Bounds.Width -ge 1920) { 3 } else { 2 }) }   # x3 for Full HD windows (measured 27 fps), else x2
+}
+$chThumb.Checked = ($cfg.thumb -eq 1 -and $curMode -eq "1")
+$chThumb.Add_CheckedChanged({ Update-Thumb }); Update-Thumb
+$chWasd = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 180 290 22
 $chWasd.Text = "Ходьба в городе на W A S D"; $chWasd.Checked = $curWasd
 
 # счётчик FPS: место и размер задаются на миниатюре экрана; fix\osd.ini читает capture.ps1
@@ -105,7 +123,7 @@ if (Test-Path $osdPath) {
         if ($l -match "^(x|y|size)=([0-9.]+)$") { $osd[$Matches[1]] = [double]::Parse($Matches[2], [Globalization.CultureInfo]::InvariantCulture) }
     }
 }
-$g2 = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 168 316 168 0
+$g2 = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 196 316 168 0
 $g2.Text = "Счётчик FPS"
 $chOsd = Add-Ctl $g2 (New-Object Windows.Forms.CheckBox) 12 20 130 22
 $chOsd.Text = "FPS и график (F10)"; $chOsd.Checked = [bool]$cfg.osd; $chOsd.Width = 146
@@ -191,7 +209,7 @@ $bPlace = Add-Ctl $g2 (New-Object Windows.Forms.Button) 12 84 138 24
 $bPlace.Text = "Разместить на экране"
 $bPlace.Add_Click({ [void][Windows.Forms.MessageBox]::Show("Счётчик появится на рабочем столе: зажмите его мышью и перетащите. Esc или двойной щелчок - готово.", "FPS"); Show-OsdPlacer })
 
-$g3 = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 340 316 244 0
+$g3 = Add-Ctl $f (New-Object Windows.Forms.GroupBox) 8 368 316 244 0
 $g3.Text = "Задержка, ввод, логи, снимки"
 function Add-Check($text, $y, $on, $tip) {
     $c = Add-Ctl $g3 (New-Object Windows.Forms.CheckBox) 12 $y 296 22
@@ -217,7 +235,7 @@ $cbFps.Text = if ($cfg.fpslimit -gt 0) { "$($cfg.fpslimit)" } else { "Без о�
 $tip1.SetToolTip($cbFps, "FpsLimiter=flipstart(N) в DDrawCompat.ini. Число можно ввести своё.")
 $null = Add-Ctl $g3 (New-Text "кадров/с") 222 216 70 22
 
-$status = Add-Ctl $f (New-Object Windows.Forms.Label) 8 590 316 44 0
+$status = Add-Ctl $f (New-Object Windows.Forms.Label) 8 618 316 44 0
 $status.Text = "Игра: $GameDir"
 
 function Save-Osd {
@@ -229,7 +247,7 @@ function Save-Cfg {
     $lim = [regex]::Match("$($cbFps.Text)", "\d+").Value
     $cfg.lowlag = [int]$chLow.Checked; $cfg.keyrepeat = [int]$chKeys.Checked; $cfg.finetick = [int]$chFine.Checked
     $cfg.screenshots = [int]$chShot.Checked; $cfg.video = [int]$chVid.Checked; $cfg.audio = [int]$chAud.Checked; $cfg.fpslog = [int]$chLog.Checked; $cfg.statlog = [int]$chStat.Checked
-    $cfg.osd = [int]$chOsd.Checked; $cfg.fontauto = [int]$auto.Checked; $cfg.frame = $frameVals[[Math]::Max(0, $cbFrame.SelectedIndex)]; $cfg.skipintro = [int]$chSkip.Checked; $cfg.fpslimit = $(if ($lim) { [Math]::Min(1000, [int]$lim) } else { 0 })
+    $cfg.osd = [int]$chOsd.Checked; $cfg.fontauto = [int]$auto.Checked; $cfg.frame = $frameVals[[Math]::Max(0, $cbFrame.SelectedIndex)]; $cfg.supersample = $ssVals[[Math]::Max(0, $cbSS.SelectedIndex)]; $cfg.thumb = [int]$chThumb.Checked; $cfg.skipintro = [int]$chSkip.Checked; $cfg.fpslimit = $(if ($lim) { [Math]::Min(1000, [int]$lim) } else { 0 })
     [IO.File]::WriteAllLines($cfgPath, @($cfg.Keys | ForEach-Object { "$_=$($cfg[$_])" }))
 }
 
@@ -237,14 +255,16 @@ function Apply-Settings([switch]$Launch) {
     Save-Osd; Save-Cfg
     $parts = "$($cbRes.Text)".Trim() -split "[xх×]"
     if ($parts.Count -ne 2 -or -not ($parts[0] -as [int]) -or -not ($parts[1] -as [int])) { $status.Text = "Разрешение вида 1920x1080"; return }
+    $cfg.outw = [int]$parts[0]; $cfg.outh = [int]$parts[1]; Save-Cfg
     $psArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $Install, "-GameDir", $GameDir, "-Width", [int]$parts[0], "-Height", [int]$parts[1])
-    if (-not $chFull.Checked) { $psArgs += "-Windowed" }
+    if ((-not $chFull.Checked) -or $chThumb.Checked) { $psArgs += "-Windowed" }
+    if ($cfg.supersample -gt 100) { $psArgs += @("-Supersample", ($cfg.supersample / 100.0).ToString([Globalization.CultureInfo]::InvariantCulture)) }
     if ($chWasd.Checked) { $psArgs += "-Wasd" }
     $psArgs += @("-FontScale", $(if ($auto.Checked) { "0" } else { ([double]$nud.Value).ToString([Globalization.CultureInfo]::InvariantCulture) }))
     $status.Text = "Применяю..."; $f.Refresh()
     $out = & powershell @psArgs 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0 -and $out -match "(?i)error|ошибк|exception") { $status.Text = "Ошибка: " + $out.Trim().Split("`n")[-1]; return $false }
-    $status.Text = "Сохранено: $($cbRes.Text), шрифт ×$(if ($auto.Checked) { 'авто' } else { $nud.Value })"
+    $status.Text = "Сохранено: $(if ($chThumb.Checked) { "окно " })$($cbRes.Text)$(if ($cfg.supersample -gt 100) { " x$($cfg.supersample / 100.0)" }), шрифт ×$(if ($auto.Checked) { 'авто' } else { $nud.Value })"
     if ($Launch) {
         Start-Process wscript.exe -ArgumentList "`"$(Join-Path $Here "play.vbs")`""   # профиль, хук, логи и запись по fix.ini; просит права администратора для PresentMon
     }
@@ -262,4 +282,7 @@ $b3.Add_Click({
 $b4 = Add-Ctl $f (New-Object Windows.Forms.Button) 334 108 80 26; $b4.Text = "Закрыть"
 $b4.Add_Click({ $f.Close() })
 
+# the first group grew by 24 px: everything under it (left column) moves down, the form too
+foreach ($c in $f.Controls) { if ($c -ne $g -and $c.Left -lt 330 -and $c.Top -ge 190) { $c.Top += 24 } }
+$f.ClientSize = New-Object Drawing.Size(422, 690)
 [void]$f.ShowDialog()

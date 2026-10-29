@@ -11,6 +11,7 @@ if llvm-objdump -r /tmp/overlay.o | grep -q "R_386_"; then echo "relocations in 
 [ "$(llvm-nm /tmp/overlay.o | awk '$3=="rect_fix"{print $1}')" = 00005000 ] || { echo "rect_fix must be at 0x5000"; exit 1; }
 [ "$(llvm-nm /tmp/overlay.o | awk '$3=="blt_fix"{print $1}')" = 00001000 ] || { echo "blt_fix must be at 0x1000"; exit 1; }
 [ "$(llvm-nm /tmp/overlay.o | awk '$3=="cursor_get"{print $1}')" = 00002000 ] || { echo "cursor_get must be at 0x2000"; exit 1; }
+[ "$(llvm-nm /tmp/overlay.o | awk '$3=="wndproc_fix"{print $1}')" = 00006000 ] || { echo "wndproc_fix must be at 0x6000"; exit 1; }
 llvm-objcopy -O binary --only-section=.text /tmp/overlay.o overlay.bin
 llvm-objdump -d -M intel /tmp/overlay.o | sed -n 1,60p
 echo "overlay.bin: $(stat -c %s overlay.bin) bytes"
