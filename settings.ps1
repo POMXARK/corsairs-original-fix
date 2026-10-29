@@ -96,8 +96,8 @@ $auto.Add_CheckedChanged({ $nud.Enabled = -not $auto.Checked }); $auto.Checked =
 
 $null = Add-Ctl $g (New-Text "Суперсэмплинг") 12 124 96 22
 $cbSS = Add-Ctl $g (New-Object Windows.Forms.ComboBox) 110 124 190 22
-$cbSS.DropDownStyle = "DropDownList"; $ssVals = @(100, 125, 150, 200, 250, 300, 400, 500, 600)
-$cbSS.Items.AddRange(@("выкл.", "x1,25 (лёгкий)", "x1,5 (мягкий)", "x2 (сильный)", "x2,5", "x3 (Full HD, ~27 к/с)", "x4 (тяжело)", "x5 (очень тяжело)", "x6 (максимум, только для малых окон)"))
+$cbSS.DropDownStyle = "DropDownList"; $ssVals = @(100, 125, 150, 200, 250, 300, 400, 500, 600, 800, 1000)
+$cbSS.Items.AddRange(@("выкл.", "x1,25 (лёгкий)", "x1,5 (мягкий)", "x2 (сильный)", "x2,5", "x3 (Full HD, ~27 к/с)", "x4 (тяжело)", "x5 (очень тяжело)", "x6 (только для малых окон)", "x8 (экстремально)", "x10 (максимум, для окон до 800x600)"))
 $si = [Array]::IndexOf($ssVals, [int]$cfg.supersample); $cbSS.SelectedIndex = $(if ($si -ge 0) { $si } else { 0 })
 $tip0.SetToolTip($cbSS, "Игра рисует в разрешении выше выбранного, а DDrawCompat уменьшает кадр до экрана: убирает лесенку на краях и мерцание у ближайших объектов. В окне размер окна остаётся выбранным (например 800x600), игра рисует крупнее, а маленькое окно показывает уменьшенную копию (рендер не выше высоты экрана). x2 при 2560x1440 даёт рендер 5120x2880: нужна мощная видеокарта.")
 $chThumb = Add-Ctl $g (New-Object Windows.Forms.CheckBox) 12 152 292 22
