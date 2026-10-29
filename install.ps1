@@ -41,12 +41,16 @@ function Save-Original($path) {
     if ((Test-Path $path) -and -not (Test-Path "$path.orig")) { Copy-Item $path "$path.orig" }
 }
 
-function Set-FontScale($path, $k) {
+function Set-FontScale($path, $k, $kDialog) {
     # fonts.ini: "name = scale,weight,italic,face" in [english]/[russian]; the scale is taken from the saved original
     $enc = [Text.Encoding]::GetEncoding(1251)
     $inv = [Globalization.CultureInfo]::InvariantCulture
+    $sec = ""
     $lines = [IO.File]::ReadAllLines("$path.orig", $enc) | ForEach-Object {
-        if ($_ -match '^((?!rgb_)\w+\s*=\s*)([0-9.]+)(,.*)$') { $Matches[1] + ([double]::Parse($Matches[2], $inv) * $k).ToString("0.00", $inv) + $Matches[3] } else { $_ }
+        if ($_ -match '^\[(\w+)\]') { $sec = $Matches[1] }
+        # the text of the dialogs (DialogTerminal) is fitted into a panel that does not grow with the menu sprites: too large a font and the text is not shown at all
+        $m = $(if ($sec -eq "DialogTerminal") { $kDialog } else { $k })
+        if ($_ -match '^((?!rgb_)\w+\s*=\s*)([0-9.]+)(,.*)$') { $Matches[1] + ([double]::Parse($Matches[2], $inv) * $m).ToString("0.00", $inv) + $Matches[3] } else { $_ }
     }
     [IO.File]::WriteAllLines($path, $lines, $enc)
 }
@@ -218,7 +222,7 @@ if (-not $FontScale -and $UiScale -and $Supersample -gt 1) { $FontScale = [Math]
 if (-not $FontScale) { $FontScale = [Math]::Max(1.0, [Math]::Floor($Height / 96.0 + 0.5) / 10.0) }
 $fonts = Join-Path $GameDir "RESOURCE\INI\fonts.ini"
 Save-Original $fonts
-Set-FontScale $fonts $FontScale
+Set-FontScale $fonts $FontScale ([Math]::Max(1.0, [Math]::Floor($Height / 96.0 + 0.5) / 10.0))
 Write-Host "fonts x$FontScale"
 Set-UiScale $GameDir ($(if ($UiScale -and $Supersample -gt 1) { $FontScale } else { 1 }))
 $ctl = Join-Path $GameDir "RESOURCE\INI\controls.ini"
