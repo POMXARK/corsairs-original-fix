@@ -732,7 +732,7 @@ if (-not $NoHook -and (Test-Path $binFile)) {
         $script:fpsPos = $px, $py
         [void][GameHook]::Poke(0, [BitConverter]::GetBytes($px) + [BitConverter]::GetBytes($py))
         Log "hook: drawing inside the game, counter at $px,$py"
-        if ($launched -and $Cfg.frame -eq 3) {   # the window of the game is made with the frame in the centre: the numbers are those of Set-Frame
+        if ($launched -and $windowed -and $Cfg.frame -eq 3) {   # (windowed only: in full screen the window of the game stays as the game makes it, else the mouse is off) the window of the game is made with the frame in the centre: the numbers are those of Set-Frame
             $wa = [Windows.Forms.Screen]::PrimaryScreen.WorkingArea
             $fx = [CapNative]::GetSystemMetrics(7); $fy = [CapNative]::GetSystemMetrics(8); $cap = [CapNative]::GetSystemMetrics(4)
             $ints = @($fx, ($fy + $cap), (2 * $fx), (2 * $fy + $cap)); $script:ints = $ints
@@ -747,7 +747,7 @@ if (-not $NoHook -and (Test-Path $binFile)) {
 }
 if ($launched) {
     [GameHook]::Resume()
-    if ($hooked -and $Cfg.frame -eq 3) {   # the imports are resolved a moment after the start: the redirects (MoveWindow of the game puts the window in the corner) are done before it gets there
+    if ($hooked -and $windowed -and $Cfg.frame -eq 3) {   # the imports are resolved a moment after the start: the redirects (MoveWindow of the game puts the window in the corner) are done before it gets there
         $t0 = Get-Date
         while (((Get-Date) - $t0).TotalSeconds -lt 10 -and -not $script:cursorFixed) {
             $iat = [GameHook]::PeekAbs(0x43116C)
