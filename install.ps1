@@ -133,9 +133,15 @@ function Set-UiScale($gameDir, $k) {
                 $l = [regex]::Replace($l, '\b(dx|dy):(\d+)', { param($m) $m.Groups[1].Value + ":" + [int]([int]$m.Groups[2].Value * $k) })
                 $l = [regex]::Replace($l, '(font:"\w+,)(\d+)', { param($m) $m.Groups[1].Value + [int]([int]$m.Groups[2].Value * 1.5) })
             }
-            # the labels of the shipyard: their coordinates are in pixels of the render and the engine halves them
-            if ($n2 -eq "town.ini" -and $sec -eq "ShipYard" -and $l -match '^(s_ship\d+|title([3-9]|1[01]))\s*=\s*txt:') {
-                $l = [regex]::Replace($l, '\b(xl|yl|xr|xo|yo):(\d+)', { param($m) $m.Groups[1].Value + ":" + [int][math]::Round([int]$m.Groups[2].Value * $k * 2) })
+            # the shipyard: coordinates of the labels are in pixels of the render and the engine halves them (x by 2k, y by 1.5k: so that the rows meet the value column);
+            # the units (title3-11) are placed from the right edge by the engine itself; the ship name and type boxes are sized in pixels
+            if ($n2 -eq "town.ini" -and $sec -eq "ShipYard") {
+                if ($l -match '^s_ship\d+\s*=\s*txt:') {
+                    $l = [regex]::Replace($l, '\b(xl|xo):(\d+)', { param($m) $m.Groups[1].Value + ":" + [int][math]::Round([int]$m.Groups[2].Value * $k * 2) })
+                    $l = [regex]::Replace($l, '\b(yl|yo):(\d+)', { param($m) $m.Groups[1].Value + ":" + [int][math]::Round([int]$m.Groups[2].Value * $k * 1.5) })
+                } elseif ($l -match '^(EditShipType|EditShipName)\s*=') {
+                    $l = [regex]::Replace($l, '\b(dx|dy):(\d+)', { param($m) $m.Groups[1].Value + ":" + [int][math]::Round([int]$m.Groups[2].Value * $k) })
+                }
             }
             $l
         }
