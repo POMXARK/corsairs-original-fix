@@ -133,6 +133,10 @@ function Set-UiScale($gameDir, $k) {
                 $l = [regex]::Replace($l, '\b(dx|dy):(\d+)', { param($m) $m.Groups[1].Value + ":" + [int]([int]$m.Groups[2].Value * $k) })
                 $l = [regex]::Replace($l, '(font:"\w+,)(\d+)', { param($m) $m.Groups[1].Value + [int]([int]$m.Groups[2].Value * 1.5) })
             }
+            # the labels of the shipyard: their coordinates are in pixels of the render and the engine halves them
+            if ($n2 -eq "town.ini" -and $sec -eq "ShipYard" -and $l -match '^(s_ship\d+|title([3-9]|1[01]))\s*=\s*txt:') {
+                $l = [regex]::Replace($l, '\b(xl|yl|xr|xo|yo):(\d+)', { param($m) $m.Groups[1].Value + ":" + [int][math]::Round([int]$m.Groups[2].Value * $k * 2) })
+            }
             $l
         }
         [IO.File]::WriteAllLines($p, $lines, $enc)
