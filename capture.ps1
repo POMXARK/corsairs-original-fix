@@ -328,6 +328,13 @@ function Poke-Text($offset, $size, $text, [switch]$Raw) {
 }
 $script:osdN = 0; $script:fpsText = ""; $script:msgText = ""; $script:msgPos = 0, 24
 $script:fpsShown = [bool]$Cfg.osd   # F10 shows and hides the counter
+# the size of the picture of the game (what the counter, the messages and the graph are placed against), not of the monitor: in a window 800x600 on a bigger screen they would be off the picture
+function Get-GameSize {
+    $w = [GameHook]::PeekAbs(0x7C54FC); $h = [GameHook]::PeekAbs(0x7C5500)
+    if ($script:smallW -gt 0) { $w = $script:smallW; $h = $script:smallH }
+    if ($w -lt 320 -or $w -gt 8192 -or $h -lt 240 -or $h -gt 8192) { $b = [Windows.Forms.Screen]::PrimaryScreen.Bounds; $w = $b.Width; $h = $b.Height }
+    return $w, $h
+}
 function Show-Fps($text) {
     if (-not $script:fpsShown) { $text = "" }
     $script:fpsText = $text
@@ -553,7 +560,16 @@ function Wait-Game {
 }
 
 function Save-Screenshot($name) {
+    # the client area of the window of the game, not the whole screen (the whole screen when the window is not found or is minimized)
     $b = [Windows.Forms.Screen]::PrimaryScreen.Bounds
+    try {
+        $h = $script:game.MainWindowHandle
+        if ($h -ne [IntPtr]::Zero -and -not [CapNative]::IsIconic($h)) {
+            $p0 = New-Object CapNative+PT; [void][CapNative]::ClientToScreen($h, [ref]$p0)
+            $cr = New-Object CapNative+RECT; [void][CapNative]::GetClientRect($h, [ref]$cr)
+            if ($cr.Right -gt 0 -and $cr.Bottom -gt 0) { $b = New-Object Drawing.Rectangle($p0.X, $p0.Y, $cr.Right, $cr.Bottom) }
+        }
+    } catch { }
     $bmp = New-Object Drawing.Bitmap($b.Width, $b.Height)
     $g = [Drawing.Graphics]::FromImage($bmp)
     $g.CopyFromScreen($b.Location, [Drawing.Point]::Empty, $b.Size)
@@ -739,7 +755,7 @@ if (-not $NoHook -and (Test-Path $binFile)) {
     else {
         $hooked = $true
         $script:scr = [Windows.Forms.Screen]::PrimaryScreen.Bounds
-        $px = [int]($Osd.x * ($scr.Width - 10 * 40)); $py = [int]($Osd.y * ($scr.Height - 20))
+        $gs = Get-GameSize; $px = [int]($Osd.x * ($gs[0] - 10 * 40)); $py = [int]($Osd.y * ($gs[1] - 20))
         $script:fpsPos = $px, $py
         [void][GameHook]::Poke(0, [BitConverter]::GetBytes($px) + [BitConverter]::GetBytes($py))
         Log "hook: drawing inside the game, counter at $px,$py"
@@ -779,7 +795,7 @@ function Notify($text, $color, $seconds, $ascii) {
     $script:toastUntil = (Get-Date).AddSeconds($seconds)
     if ($hooked) {
         if ($hookLive) {
-            $w = [Windows.Forms.Screen]::PrimaryScreen.Bounds.Width
+            $w = (Get-GameSize)[0]
             $script:msgText = $ascii; $script:msgPos = [int](($w - 8 * $ascii.Length) / 2), 24
             [void][GameHook]::Poke(8, [BitConverter]::GetBytes($msgPos[0]) + [BitConverter]::GetBytes($msgPos[1]))
             Poke-Text 0x40 60 $ascii
@@ -827,7 +843,7 @@ function Auto-Step {
     elseif ($script:autoStep -eq 4 -and $t -gt 10 -and $Cfg.autotest -eq 3) { $script:k0 = Snap "4_menu" $r; $script:dx0 = $r.Left; $script:dy0 = $r.Top; $oy = [GameHook]::PeekAbs(0x7E0000CC); [Windows.Forms.Cursor]::Position = New-Object Drawing.Point(($r.Left + 400), ($oy - 13)); Start-Sleep -Milliseconds 300; [CapNative]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero); Log "autotest drag: down at $($r.Left + 400),$($oy - 13), window $($r.Left),$($r.Top)"; $script:autoStep = 10; $script:dragAt = $t }
     elseif ($script:autoStep -ge 10 -and $script:autoStep -le 12 -and $t -gt $script:dragAt + 0.4) { $m = $script:autoStep - 9; $c = [Windows.Forms.Cursor]::Position; [Windows.Forms.Cursor]::Position = New-Object Drawing.Point(($script:dx0 + 400 + 120 * $m), ($c.Y + 0 + $(if ($m -eq 1) { 0 } else { 0 }) + 50)); $script:dragAt = $t; $script:autoStep++; Log "autotest drag: move $m to $([Windows.Forms.Cursor]::Position.X),$([Windows.Forms.Cursor]::Position.Y)" }
     elseif ($script:autoStep -eq 13 -and $t -gt $script:dragAt + 0.4) { [CapNative]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 800; [void][CapNative]::GetWindowRect($game.MainWindowHandle, [ref]$r); $script:k1 = Snap "5_afterdrag" $r; Log "autotest drag: window $($script:dx0),$($script:dy0) -> $($r.Left),$($r.Top), client origin $([GameHook]::PeekAbs(0x7E0000C8)),$([GameHook]::PeekAbs(0x7E0000CC)) -> $(if ($r.Left -gt $script:dx0 + 300) { 'DRAG WORKS' } else { 'DRAG STUCK' })"; $script:autoStep = 14; Stop-Process -Id $game.Id -Force }
-    elseif ($script:autoStep -eq 4 -and $t -gt 10) { $script:k0 = Snap "4_menu" $r; $script:autoStep = 5; $ox = $r.Left; $oy = $r.Top; if ($Cfg.frame -eq 3) { $ox = [GameHook]::PeekAbs(0x7E0000C8); $oy = [GameHook]::PeekAbs(0x7E0000CC) }; [Windows.Forms.Cursor]::Position = New-Object Drawing.Point(($ox + $Cfg.clickx), ($oy + $Cfg.clicky)); Start-Sleep -Milliseconds 300; $cc = [Windows.Forms.Cursor]::Position; Log "autotest: before click cursor $($cc.X),$($cc.Y) window $($r.Left),$($r.Top) rel $($cc.X - $ox),$($cc.Y - $oy) game-mouse $([GameHook]::PeekAbs(0x7C75F4)),$([GameHook]::PeekAbs(0x7C75F8))"; if ($Cfg.autotest -ne 2) { [CapNative]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 80; [CapNative]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero) } }   # autotest=2: no click
+    elseif ($script:autoStep -eq 4 -and $t -gt 10) { $script:k0 = Snap "4_menu" $r; Save-Screenshot (Join-Path $dir "4_gameshot.jpg"); $script:autoStep = 5; $ox = $r.Left; $oy = $r.Top; if ($Cfg.frame -eq 3) { $ox = [GameHook]::PeekAbs(0x7E0000C8); $oy = [GameHook]::PeekAbs(0x7E0000CC) }; [Windows.Forms.Cursor]::Position = New-Object Drawing.Point(($ox + $Cfg.clickx), ($oy + $Cfg.clicky)); Start-Sleep -Milliseconds 300; $cc = [Windows.Forms.Cursor]::Position; Log "autotest: before click cursor $($cc.X),$($cc.Y) window $($r.Left),$($r.Top) rel $($cc.X - $ox),$($cc.Y - $oy) game-mouse $([GameHook]::PeekAbs(0x7C75F4)),$([GameHook]::PeekAbs(0x7C75F8))"; if ($Cfg.autotest -ne 2) { [CapNative]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 80; [CapNative]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero) } }   # autotest=2: no click
     elseif ($script:autoStep -eq 5 -and $t -gt 11.5) { $script:k1 = Snap "5_afterclick" $r; $script:autoStep = 6; [CapNative]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 80; [CapNative]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero) }
     elseif ($script:autoStep -eq 6 -and $t -gt 13) { $script:k2 = Snap "6_afteresc" $r; Log "autotest: keys menu/click/esc hashes $($script:k0) $($script:k1) $($script:k2) -> click $(if ($script:k0 -ne $script:k1) { 'WORKS' } else { 'DEAD' }), Esc $(if ($script:k1 -ne $script:k2) { 'WORKS' } else { 'DEAD' })"; Log "autotest: gui $([CapNative]::Gui($game.MainWindowHandle)) foreground $([CapNative]::GetForegroundWindow()) game $($game.MainWindowHandle)"; $script:autoStep = 7; foreach ($i in 1..2) { [CapNative]::keybd_event(0x28, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 80; [CapNative]::keybd_event(0x28, 0, 2, [UIntPtr]::Zero); Start-Sleep -Milliseconds 200 } }
     elseif ($script:autoStep -eq 7 -and $t -gt 14.5) { $script:k3 = Snap "7_afterdown" $r; Log "autotest: Down x2 -> $(if ($script:k3 -ne $script:k2) { 'WORKS' } else { 'DEAD' })"; $script:autoStep = 8; Stop-Process -Id $game.Id -Force }
@@ -872,10 +888,11 @@ while (-not $game.HasExited) {
         $fineDone = $true; Log ("fine tick: " + $(if ([GameHook]::FineTick()) { "on" } else { "not set" }))
     }
     if ($hooked -and $hookLive -and $tick % 5 -eq 0) {   # something in the game zeroes the page now and then: the strings are written again
+        $gs = Get-GameSize; $script:fpsPos = [int]($Osd.x * ($gs[0] - 10 * 40)), [int]($Osd.y * ($gs[1] - 20))   # the size of the picture is known only after the start of the game
         [void][GameHook]::Poke(0, [BitConverter]::GetBytes([int]$fpsPos[0]) + [BitConverter]::GetBytes([int]$fpsPos[1]) + [BitConverter]::GetBytes([int]$msgPos[0]) + [BitConverter]::GetBytes([int]$msgPos[1]))
         Poke-Text 0x10 48 $fpsText
         Poke-Text 0x40 60 $msgText
-        $gx = [Math]::Max(0, [int]($scr.Width - 490)); $gy = [Math]::Max(0, [int]$fpsPos[1] - 200)   # the frame-time graph above the counter
+        $gx = [Math]::Max(0, [int]((Get-GameSize)[0] - 490)); $gy = [Math]::Max(0, [int]$fpsPos[1] - 200)   # the frame-time graph above the counter
         [void][GameHook]::Poke(0xF4, [BitConverter]::GetBytes([int][Math]::Min(1000, [Math]::Max(0, $Cfg.fpslimit))))   # the frame limit of fix.ini (overlay.c hook)
         [void][GameHook]::Poke(0xA0, [BitConverter]::GetBytes([int]$(if ($focus -and -not $NoKeyRepeat) { 1 } else { 0 })))   # the held keys are repeated while the game is in front
         [void][GameHook]::Poke(0x80, [BitConverter]::GetBytes([int]$(if ($fpsShown) { 1 } else { 0 })) + [BitConverter]::GetBytes($gx) + [BitConverter]::GetBytes($gy))
