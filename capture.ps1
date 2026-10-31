@@ -241,6 +241,15 @@ public static class GameHook {
         return ok;
     }
     public static int PeekAbs(int addr) { byte[] b = new byte[4]; int n; if (proc == IntPtr.Zero || !ReadProcessMemory(proc, (IntPtr)addr, b, 4, out n)) return -1; return BitConverter.ToInt32(b, 0); }
+    // addresses of consecutive int32 values (chunks of 64 KB with a 16 byte overlap; unreadable chunks are skipped), at most 100
+    public static string ScanSeq(int[] v) {
+        var sb = new System.Text.StringBuilder(); int found = 0; byte[] b = new byte[0x10010]; int n;
+        for (long a = 0x10000; a < 0x7FFE0000L && found < 100; a += 0x10000) {
+            if (!ReadProcessMemory(proc, (IntPtr)a, b, b.Length, out n)) { if (!ReadProcessMemory(proc, (IntPtr)a, b, 0x10000, out n)) continue; }
+            for (int i = 0; i + 4 * v.Length <= n; i += 4) { bool ok = true; for (int k = 0; k < v.Length && ok; k++) if (BitConverter.ToInt32(b, i + 4 * k) != v[k]) ok = false; if (ok) { sb.AppendFormat("{0:X8} ", a + i); if (++found >= 100) break; } }
+        }
+        return sb.ToString();
+    }
     public static int Peek(int offset) { byte[] b = new byte[4]; int n; if (proc == IntPtr.Zero || !ReadProcessMemory(proc, (IntPtr)(Data + offset), b, 4, out n)) return -1; return BitConverter.ToInt32(b, 0); }
     public static bool Poke(int offset, byte[] data) { int n; return proc != IntPtr.Zero && WriteProcessMemory(proc, (IntPtr)(Data + offset), data, data.Length, out n); }
 }
@@ -832,7 +841,7 @@ function Intro-Test {
 # (X, Y are the game coordinates 800x600, the window is scaled 2x by DDrawCompat; seconds count from the first call); shots go to Documents\My Games\Sea Dogs\auto
 $script:seqLines = $null; $script:seqDone = @{}
 # live queue (autotest=7): live.txt next to this script, one command per line, appended while the game runs; each line is done once, in order.
-# click X Y | move X Y | key VK | snap NAME | peek HEXADDR | quit  (X, Y: game coordinates 800x600, the window is scaled 2x by DDrawCompat); shots go to Documents\My Games\Sea Dogs\auto
+# click X Y | move X Y | key VK | snap NAME | peek HEXADDR | scan INT INT .. | watch HEXADDR COUNT MS | quit  (X, Y: game coordinates 800x600, the window is scaled 2x by DDrawCompat); shots go to Documents\My Games\Sea Dogs\auto
 $script:liveN = 0
 function Seq-Step {
     $dir = Join-Path $Stash "auto"; New-Item $dir -ItemType Directory -Force | Out-Null
@@ -848,6 +857,8 @@ function Seq-Step {
             "move" { [Windows.Forms.Cursor]::Position = New-Object Drawing.Point(($ox + 2 * [int]$p[1]), ($oy + 2 * [int]$p[2])); Log "live: move $($p[1]),$($p[2])" }
             "key" { $vk = [byte][int]$p[1]; [CapNative]::keybd_event($vk, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 80; [CapNative]::keybd_event($vk, 0, 2, [UIntPtr]::Zero); Log "live: key $vk" }
             "snap" { $b = [Windows.Forms.Screen]::PrimaryScreen.Bounds; $bm = New-Object Drawing.Bitmap $b.Width, $b.Height; $g = [Drawing.Graphics]::FromImage($bm); $g.CopyFromScreen($b.Location, [Drawing.Point]::Empty, $b.Size); $g.Dispose(); $bm.Save((Join-Path $dir "$($p[1]).png")); $bm.Dispose(); Log "live: snap $($p[1])" }
+            "scan" { Log "live: scan $($lines[$script:liveN - 1]) = $([GameHook]::ScanSeq([int[]]($p[1..($p.Count - 1)] | % { [int]$_ })))" }
+            "watch" { $ad = [Convert]::ToInt32($p[1], 16); for ($k = 0; $k -lt [int]$p[2]; $k++) { Log "live: watch $($p[1]) $((Get-Date).ToString('ss.fff')) = $((0..5 | % { [GameHook]::PeekAbs($ad + 4 * $_) }) -join ' ')"; Start-Sleep -Milliseconds ([int]$p[3]) } }
             "peek" { Log "live: peek $($p[1]) = $([GameHook]::PeekAbs([Convert]::ToInt32($p[1], 16)))" }
             "quit" { Log "live: quit"; Stop-Process -Id $game.Id -Force }
         }
