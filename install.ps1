@@ -241,7 +241,8 @@ Set-IniKey $ini "WINDOW_WIDTH" $Width
 Set-IniKey $ini "WINDOW_HEIGHT" $Height
 Set-IniKey $ini "WINDOW_MODE" ($(if ($Windowed) { 1 } else { 0 }))
 if (-not $FontScale -and $UiScale -and $Supersample -gt 1) { $FontScale = [Math]::Round($Width / 800.0, 1) }   # the sprites of the menu grow with the render: 800 virtual pixels = the whole width
-if (-not $FontScale) { $FontScale = [Math]::Max(1.0, [Math]::Floor($Height / 96.0 + 0.5) / 10.0) }
+# the engine scales the menu fonts by render height / 600 itself: an extra factor glues the captions ("НапастьПропустить") — checked at 1400x1050 with 1.0
+if (-not $FontScale) { $FontScale = 1.0 }
 $fonts = Join-Path $GameDir "RESOURCE\INI\fonts.ini"
 Save-Original $fonts
 Set-FontScale $fonts $FontScale 1.0
