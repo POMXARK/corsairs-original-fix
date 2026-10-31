@@ -215,9 +215,21 @@ if (-not $Width -or -not $Height) {
     $Height = if ($v) { [int]$v.CurrentVerticalResolution } else { 960 }
     if ($Windowed) { $Width = 1024; $Height = 768 }   # a window with a title bar has to fit the screen
 }
+# the world map (MAP.dll) stays black when the game renders wider than 1400 x 1050 (checked 1200/1400 ok, 1500/1600 black): the render is capped
+if ($Width -gt 1400 -or $Height -gt 1050) {
+    $k = [Math]::Min(1400.0 / $Width, 1050.0 / $Height)
+    $Width = [int]([Math]::Floor($Width * $k / 2) * 2); $Height = [int]([Math]::Floor($Height * $k / 2) * 2)
+    Write-Host "render capped to ${Width}x$Height (the map does not draw above 1400x1050)"
+    $Supersample = 1
+}
 if ($Supersample -gt 1) {
     $k = $Supersample
     $Width = [int]([Math]::Round($Width * $k / 2) * 2); $Height = [int]([Math]::Round($Height * $k / 2) * 2)
+    if ($Width -gt 1400 -or $Height -gt 1050) {
+        $k = [Math]::Min(1400.0 / $Width, 1050.0 / $Height)
+        $Width = [int]([Math]::Floor($Width * $k / 2) * 2); $Height = [int]([Math]::Floor($Height * $k / 2) * 2)
+        Write-Host "render capped to ${Width}x$Height (the map does not draw above 1400x1050)"
+    }
     # the resolution has to be in the list of DDrawCompat, otherwise the game does not get it
     $dd = Join-Path $GameDir "DDrawCompat.ini"; $res = "${Width}x$Height"
     $t = [IO.File]::ReadAllText($dd)
