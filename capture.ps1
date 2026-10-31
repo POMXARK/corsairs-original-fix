@@ -828,6 +828,31 @@ function Intro-Test {
     }
     if ($t -gt 32) { Log "intro test: done"; $script:introDone["esc"] = 2; [void][CapNative]::PostMessage($game.MainWindowHandle, 0x10, [IntPtr]0, [IntPtr]0); $script:introT0 = [DateTime]::MaxValue }
 }
+# autotest=7: a script of steps from seq.txt next to this file, one per line "<seconds> click X Y" | "key VK" | "snap NAME" | "quit"
+# (X, Y are the game coordinates 800x600, the window is scaled 2x by DDrawCompat; seconds count from the first call); shots go to Documents\My Games\Sea Dogs\auto
+$script:seqLines = $null; $script:seqDone = @{}
+# live queue (autotest=7): live.txt next to this script, one command per line, appended while the game runs; each line is done once, in order.
+# click X Y | move X Y | key VK | snap NAME | peek HEXADDR | quit  (X, Y: game coordinates 800x600, the window is scaled 2x by DDrawCompat); shots go to Documents\My Games\Sea Dogs\auto
+$script:liveN = 0
+function Seq-Step {
+    $dir = Join-Path $Stash "auto"; New-Item $dir -ItemType Directory -Force | Out-Null
+    $f = Join-Path $PSScriptRoot "live.txt"; if (-not (Test-Path $f)) { return }
+    $lines = @(Get-Content $f | ? { $_ -match "\S" })
+    if ($lines.Count -le $script:liveN) { return }
+    $r = New-Object CapNative+RECT; [void][CapNative]::GetWindowRect($game.MainWindowHandle, [ref]$r)
+    $ox = $r.Left; $oy = $r.Top; if ($Cfg.frame -eq 3) { $ox = [GameHook]::PeekAbs(0x7E0000C8); $oy = [GameHook]::PeekAbs(0x7E0000CC) }
+    while ($script:liveN -lt $lines.Count) {
+        $p = $lines[$script:liveN].Trim() -split "\s+"; $script:liveN++
+        switch ($p[0]) {
+            "click" { [Windows.Forms.Cursor]::Position = New-Object Drawing.Point(($ox + 2 * [int]$p[1]), ($oy + 2 * [int]$p[2])); Start-Sleep -Milliseconds 250; [CapNative]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 80; [CapNative]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero); Log "live: click $($p[1]),$($p[2])" }
+            "move" { [Windows.Forms.Cursor]::Position = New-Object Drawing.Point(($ox + 2 * [int]$p[1]), ($oy + 2 * [int]$p[2])); Log "live: move $($p[1]),$($p[2])" }
+            "key" { $vk = [byte][int]$p[1]; [CapNative]::keybd_event($vk, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 80; [CapNative]::keybd_event($vk, 0, 2, [UIntPtr]::Zero); Log "live: key $vk" }
+            "snap" { $b = [Windows.Forms.Screen]::PrimaryScreen.Bounds; $bm = New-Object Drawing.Bitmap $b.Width, $b.Height; $g = [Drawing.Graphics]::FromImage($bm); $g.CopyFromScreen($b.Location, [Drawing.Point]::Empty, $b.Size); $g.Dispose(); $bm.Save((Join-Path $dir "$($p[1]).png")); $bm.Dispose(); Log "live: snap $($p[1])" }
+            "peek" { Log "live: peek $($p[1]) = $([GameHook]::PeekAbs([Convert]::ToInt32($p[1], 16)))" }
+            "quit" { Log "live: quit"; Stop-Process -Id $game.Id -Force }
+        }
+    }
+}
 function Auto-Step {
     if (-not $script:autoAt) { $script:autoAt = Get-Date }
     $t = ((Get-Date) - $script:autoAt).TotalSeconds; $dir = Join-Path $Stash "auto"
@@ -876,6 +901,7 @@ while (-not $game.HasExited) {
     [Windows.Forms.Application]::DoEvents()
     if ($Cfg.skipintro -and $tick % 2 -eq 0) { try { Skip-Intro } catch { } }
     if ($Cfg.autotest -eq 6) { try { Intro-Test } catch { Log "intro test failed: $($_.Exception.Message)" } }
+    elseif ($Cfg.autotest -eq 7 -and $hookLive) { try { Seq-Step } catch { Log "seq failed: $($_.Exception.Message)" } }
     elseif ($Cfg.autotest -and $hookLive) { try { Auto-Step } catch { Log "autotest failed: $($_.Exception.Message)" } }
     if ($hookLive -and $windowed) { try { Log-Input } catch { if (-not $script:liErr) { $script:liErr = $true; Log "log-input failed: $($_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)" } } }
     if ($script:cursorFixed -and $tick % 10 -eq 3) { try { $nc = [GameHook]::CursorFix(); if ($nc -or $tick % 100 -eq 3) { Log "cursor fix: changed $nc, $([GameHook]::Dbg)" } } catch { if (-not $script:cfErr) { $script:cfErr = $true; Log "cursor fix failed: $($_.Exception.Message)" } } }
